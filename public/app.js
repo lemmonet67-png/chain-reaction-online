@@ -43,6 +43,9 @@
   let net = null, netState = "idle";        // idle | connecting | open | lost
   let mySeat = -1, isHost = false, roomCode = null, seats = [], started = false;
   let retry = 0, retryTimer = null, pingTimer = null;
+  // What we're trying to be part of. Replayed on every successful open, because
+  // a handshake can fail outright and the intent must survive that.
+  let intent = null;
 
   let cursor = 0, cursorShown = false;
 
@@ -191,8 +194,10 @@
       s === "open" ? "connected" : s === "connecting" ? "connecting" : s === "lost" ? "reconnecting" : "offline";
   }
 
-  function connect(then) {
-    if (net && (net.readyState === 0 || net.readyState === 1)) { then && then(); return; }
+  function connect(want) {
+    if (want) intent = want;
+    if (net && net.readyState === 1) { sendNet(intent); return; }
+    if (net && net.readyState === 0) return;      // handshake already in flight
     setNet("connecting");
     const proto = location.protocol === "https:" ? "wss" : "ws";
     net = new WebSocket(proto + "://" + location.host);
@@ -202,7 +207,7 @@
       setNet("open");
       clearInterval(pingTimer);
       pingTimer = setInterval(() => sendNet({ type: "ping" }), 25000);
-      then && then();
+      if (intent) sendNet(intent);
     };
     net.onmessage = ev => {
       let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
@@ -212,15 +217,16 @@
       clearInterval(pingTimer);
       if (mode !== "online") { setNet("idle"); return; }
       setNet("lost");
-      // Back off, then try to reclaim the seat with the stored token.
+      // Back off and retry. `intent` carries whatever we were doing — creating
+      // a room, or reclaiming a seat with its token — so a handshake that never
+      // opened is retried rather than silently dropped.
+      if (!intent) {
+        const code = store.get(STORE.room);
+        if (code) intent = { type: "join", code, token: store.get(STORE.token) };
+      }
       const wait = Math.min(8000, 600 * Math.pow(2, retry++));
       clearTimeout(retryTimer);
-      retryTimer = setTimeout(() => {
-        connect(() => {
-          const code = store.get(STORE.room);
-          if (code) sendNet({ type: "join", code, token: store.get(STORE.token) });
-        });
-      }, wait);
+      retryTimer = setTimeout(connect, wait);
     };
     net.onerror = () => { /* onclose handles recovery */ };
   }
@@ -237,6 +243,8 @@
         roomCode = m.code;
         store.set(STORE.room, m.code);
         store.set(STORE.token, m.token);
+        // From here on, any reconnect should reclaim this exact seat.
+        intent = { type: "join", code: m.code, token: m.token };
         location.hash = m.code;
         lobbyMsg("");
         break;
@@ -606,7 +614,7 @@
       const hash = (location.hash || "").replace("#", "").toUpperCase().trim();
       const remembered = store.get(STORE.room);
       const target = hash || remembered;
-      connect(() => { if (target) sendNet({ type: "join", code: target, token: store.get(STORE.token) }); });
+      if (target) connect({ type: "join", code: target, token: store.get(STORE.token) });
       if (!logical) newLocalGame();
     } else {
       leaveRoom(false);
@@ -619,6 +627,7 @@
   function leaveRoom(reconnectable) {
     clearTimeout(retryTimer);
     clearInterval(pingTimer);
+    intent = null;
     if (net) { net.onclose = null; net.close(); net = null; }
     if (!reconnectable) {
       store.del(STORE.room); store.del(STORE.token);
@@ -634,14 +643,14 @@
 
   $("btnCreate").onclick = () => {
     lobbyMsg("");
-    connect(() => sendNet({ type: "create", sizeIdx: roomSize, numPlayers: roomPlayers }));
+    connect({ type: "create", sizeIdx: roomSize, numPlayers: roomPlayers });
   };
 
   $("btnJoin").onclick = () => {
     const code = $("joinCode").value.toUpperCase().trim();
     if (code.length !== 4) { lobbyMsg("Room codes are 4 characters.", "bad"); return; }
     lobbyMsg("");
-    connect(() => sendNet({ type: "join", code }));
+    connect({ type: "join", code });
   };
 
   $("joinCode").addEventListener("keydown", e => { if (e.key === "Enter") $("btnJoin").click(); });
@@ -667,7 +676,7 @@
     if (code.length === 4 && code !== roomCode) {
       mode = "online";
       syncSegments();
-      connect(() => sendNet({ type: "join", code }));
+      connect({ type: "join", code });
     }
   });
 
