@@ -154,6 +154,13 @@
   .code-field input::placeholder{ color:#3B4B59; letter-spacing:.2em; }
   .code-field input:focus-visible{ outline:2px solid var(--turn); outline-offset:-1px; }
 
+  .nameField{
+    width:100%; font-family:var(--mono); font-size:13px; letter-spacing:.08em;
+    padding:8px 10px; background:#0C141C; color:#E6F0F7; border:1px solid var(--rule);
+  }
+  .nameField::placeholder{ color:#3B4B59; }
+  .nameField:focus-visible{ outline:2px solid var(--turn); outline-offset:-1px; }
+
   .roomcode{
     display:flex; align-items:center; justify-content:space-between; gap:10px;
     padding:10px 12px; background:#0C141C; border:1px solid var(--rule);
@@ -299,6 +306,11 @@
 
       <section class="card">
         <div class="card-body">
+          <div class="row stack">
+            <label for="playerName">Your name</label>
+            <input id="playerName" class="nameField" maxlength="14" autocomplete="nickname"
+                   spellcheck="false" placeholder="Strontium">
+          </div>
           <div class="row">
             <label id="lblStyle">Board</label>
             <div class="seg" id="segStyle" role="group" aria-labelledby="lblStyle"></div>

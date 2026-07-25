@@ -75,6 +75,11 @@ function makeCode() {
 
 const token = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
+/** Names come from players, so strip control characters and cap the length. */
+const CONTROL = new RegExp("[\u0000-\u001F\u007F]", "g");
+const cleanName = s =>
+  String(s == null ? "" : s).replace(CONTROL, "").trim().slice(0, 14);
+
 function createRoom(sizeIdx, numPlayers) {
   const size = Engine.SIZES[sizeIdx] || Engine.SIZES[1];
   const code = makeCode();
@@ -83,7 +88,7 @@ function createRoom(sizeIdx, numPlayers) {
     sizeIdx,
     numPlayers,
     state: Engine.createState(size.cols, size.rows, numPlayers),
-    seats: Array.from({ length: numPlayers }, () => ({ token: null, sock: null, cpu: false })),
+    seats: Array.from({ length: numPlayers }, () => ({ token: null, sock: null, cpu: false, name: "" })),
     hostToken: null,
     touched: Date.now(),
     cpuTimer: null
@@ -98,7 +103,8 @@ const allSeated = room => room.seats.every(seatReady);
 function seatView(room) {
   return room.seats.map((s, i) => ({
     seat: i,
-    name: Engine.PLAYERS[i].name,
+    name: s.cpu ? Engine.PLAYERS[i].name : (s.name || Engine.PLAYERS[i].name),
+    custom: !s.cpu && !!s.name,
     cpu: s.cpu,
     connected: !!s.sock,
     claimed: !!s.token
@@ -216,11 +222,13 @@ function leaveCurrent(sock) {
   sock.seat = -1;
 }
 
-function attach(sock, room, seatIdx, seatToken) {
+function attach(sock, room, seatIdx, seatToken, name) {
   const seat = room.seats[seatIdx];
   seat.token = seatToken;
   seat.sock = sock;
   seat.cpu = false;
+  const clean = cleanName(name);
+  if (clean) seat.name = clean;            // a reconnect without one keeps the old
   sock.room = room.code;
   sock.seat = seatIdx;
   room.touched = Date.now();
@@ -249,7 +257,7 @@ function handle(sock, msg) {
       const numPlayers = Number.isInteger(msg.numPlayers)
         ? Math.min(Engine.MAX_PLAYERS, Math.max(2, msg.numPlayers)) : 2;
       const room = createRoom(sizeIdx, numPlayers);
-      attach(sock, room, 0, token());
+      attach(sock, room, 0, token(), msg.name);
       return;
     }
 
@@ -262,11 +270,11 @@ function handle(sock, msg) {
       // Reclaim a seat first — this is how reconnects get their game back.
       if (msg.token) {
         const idx = room.seats.findIndex(s => s.token === msg.token);
-        if (idx !== -1) return attach(sock, room, idx, msg.token);
+        if (idx !== -1) return attach(sock, room, idx, msg.token, msg.name);
       }
       const free = room.seats.findIndex(s => !s.sock && (!s.token || s.cpu));
       if (free === -1) return fail(sock, "full", "That room is full.");
-      return attach(sock, room, free, token());
+      return attach(sock, room, free, token(), msg.name);
     }
 
     case "move": {
@@ -308,6 +316,17 @@ function handle(sock, msg) {
       const seat = room.seats[sock.seat];
       if (!seat || room.hostToken !== seat.token) return fail(sock, "not_host", "Only the host can restart.");
       return resetRoom(room);
+    }
+
+    case "name": {
+      const room = rooms.get(sock.room);
+      if (!room) return;
+      const seat = room.seats[sock.seat];
+      if (!seat || seat.sock !== sock) return;   // you can only rename yourself
+      seat.name = cleanName(msg.name);
+      room.touched = Date.now();
+      pushRoom(room);
+      return;
     }
 
     case "ping":

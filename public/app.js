@@ -48,6 +48,10 @@
     }
   };
 
+  const STORE_NAME = "cr.name";
+  const cleanName = s => String(s == null ? "" : s).trim().slice(0, 14);
+  let myName = cleanName(store.get(STORE_NAME));
+
   let boardStyle = store.get(STORE.style) === "console" ? "console" : "classic";
   const theme = () => THEMES[boardStyle];
   const colorOf = p => theme().colors[p];
@@ -191,9 +195,9 @@
     syncUI();
     if (moveQueue.length) { playNextMove(); return; }
     if (logical.over) {
-      announce(logical.winner >= 0 ? PLAYERS[logical.winner].name + " wins" : "Stalemate");
+      announce(logical.winner >= 0 ? seatName(logical.winner) + " wins" : "Stalemate");
     } else {
-      announce(PLAYERS[logical.cur].name + " to place");
+      announce(seatName(logical.cur) + " to place");
       if (mode === "local") maybeLocalCPU();
     }
   }
@@ -208,7 +212,7 @@
     cursor = ((s.rows / 2) | 0) * s.cols + ((s.cols / 2) | 0);
     wrap.style.aspectRatio = s.cols + " / " + s.rows;
     resize(); syncUI();
-    announce(PLAYERS[logical.cur].name + " to place");
+    announce(seatName(logical.cur) + " to place");
     maybeLocalCPU();
   }
 
@@ -268,7 +272,7 @@
       // opened is retried rather than silently dropped.
       if (!intent) {
         const code = store.get(STORE.room);
-        if (code) intent = { type: "join", code, token: store.get(STORE.token) };
+        if (code) intent = { type: "join", code, token: store.get(STORE.token), name: myName };
       }
       const wait = Math.min(8000, 600 * Math.pow(2, retry++));
       clearTimeout(retryTimer);
@@ -290,7 +294,7 @@
         store.set(STORE.room, m.code);
         store.set(STORE.token, m.token);
         // From here on, any reconnect should reclaim this exact seat.
-        intent = { type: "join", code: m.code, token: m.token };
+        intent = { type: "join", code: m.code, token: m.token, name: myName };
         location.hash = m.code;
         lobbyMsg("");
         break;
@@ -558,6 +562,15 @@
     if (tone) el.dataset.tone = tone; else delete el.dataset.tone;
   }
 
+  /** Display name for a seat: whatever that player chose, else the element name. */
+  function seatName(p) {
+    if (mode === "online") {
+      const s = seats[p];
+      return (s && s.name) || PLAYERS[p].name;
+    }
+    return p === 0 && myName ? myName : PLAYERS[p].name;
+  }
+
   function seatInfo(p) {
     if (mode === "local") return { cpu: localCPU[p], connected: true, mine: !localCPU[p] };
     const s = seats[p];
@@ -582,7 +595,7 @@
 
       const sw = document.createElement("span"); sw.className = "swatch";
       const nm = document.createElement("span"); nm.className = "nm";
-      nm.textContent = PLAYERS[p].name;
+      nm.textContent = seatName(p);
       if (mode === "online" && info.mine) {
         const you = document.createElement("i");
         you.textContent = "  ← you";
@@ -597,7 +610,7 @@
         tag.type = "button";
         tag.className = "tag";
         tag.textContent = localCPU[p] ? "CPU" : "YOU";
-        tag.setAttribute("aria-label", PLAYERS[p].name + ": " + (localCPU[p] ? "CPU" : "human") + ", click to swap");
+        tag.setAttribute("aria-label", seatName(p) + ": " + (localCPU[p] ? "CPU" : "human") + ", click to swap");
         tag.onclick = () => { localCPU[p] = !localCPU[p]; syncUI(); maybeLocalCPU(); };
       } else if (isHost && !info.mine && !info.connected) {
         tag = document.createElement("button");
@@ -638,16 +651,16 @@
       banner.classList.add("live");
       veil = "Room " + roomCode + " — waiting for " + need + " more player" + (need === 1 ? "" : "s");
     } else if (st.over) {
-      bannerText.textContent = st.winner >= 0 ? PLAYERS[st.winner].name + " wins" : "Stalemate";
+      bannerText.textContent = st.winner >= 0 ? seatName(st.winner) + " wins" : "Stalemate";
       banner.classList.remove("live");
     } else if (animating && chainShown > 1) {
       bannerText.textContent = "Chain reaction ×" + chainShown;
       banner.classList.add("live");
     } else if (mode === "online") {
-      bannerText.textContent = mySeat === st.cur ? "Your move" : PLAYERS[st.cur].name + " thinking";
+      bannerText.textContent = mySeat === st.cur ? "Your move" : seatName(st.cur) + " thinking";
       banner.classList.add("live");
     } else {
-      bannerText.textContent = PLAYERS[st.cur].name + (localCPU[st.cur] ? " computing" : " to place");
+      bannerText.textContent = seatName(st.cur) + (localCPU[st.cur] ? " computing" : " to place");
       banner.classList.add("live");
     }
     $("veil").dataset.on = veil ? "1" : "0";
@@ -719,7 +732,7 @@
       const hash = (location.hash || "").replace("#", "").toUpperCase().trim();
       const remembered = store.get(STORE.room);
       const target = hash || remembered;
-      if (target) connect({ type: "join", code: target, token: store.get(STORE.token) });
+      if (target) connect({ type: "join", code: target, token: store.get(STORE.token), name: myName });
       if (!logical) newLocalGame();
     } else {
       leaveRoom(false);
@@ -745,18 +758,37 @@
 
   /* ── wiring ──────────────────────────────────────────────────────────── */
 
+  const nameField = $("playerName");
+  nameField.value = myName;
+
+  function commitName() {
+    const v = cleanName(nameField.value);
+    if (v === myName) return;
+    myName = v;
+    store.set(STORE_NAME, myName);
+    // Tell the room, and keep the reconnect intent carrying the new name.
+    if (mode === "online" && roomCode) sendNet({ type: "name", name: myName });
+    if (intent) intent.name = myName;
+    syncUI();
+  }
+  nameField.addEventListener("change", commitName);
+  nameField.addEventListener("blur", commitName);
+  nameField.addEventListener("keydown", e => {
+    if (e.key === "Enter") { commitName(); nameField.blur(); }
+  });
+
   $("newGame").onclick = () => { newLocalGame(); canvas.focus(); };
 
   $("btnCreate").onclick = () => {
     lobbyMsg("");
-    connect({ type: "create", sizeIdx: roomSize, numPlayers: roomPlayers });
+    connect({ type: "create", sizeIdx: roomSize, numPlayers: roomPlayers, name: myName });
   };
 
   $("btnJoin").onclick = () => {
     const code = $("joinCode").value.toUpperCase().trim();
     if (code.length !== 4) { lobbyMsg("Room codes are 4 characters.", "bad"); return; }
     lobbyMsg("");
-    connect({ type: "join", code });
+    connect({ type: "join", code, name: myName });
   };
 
   $("joinCode").addEventListener("keydown", e => { if (e.key === "Enter") $("btnJoin").click(); });
@@ -782,7 +814,7 @@
     if (code.length === 4 && code !== roomCode) {
       mode = "online";
       syncSegments();
-      connect({ type: "join", code });
+      connect({ type: "join", code, name: myName });
     }
   });
 

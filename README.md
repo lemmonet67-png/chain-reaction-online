@@ -27,6 +27,13 @@ tab (an ordinary window and a private window works best — they get separate
 
 ## Playing
 
+2 to 8 players, on grids from 5×7 up to 12×16.
+
+Set **Your name** in the panel and it shows up on your seat for everyone in the
+room; leave it blank and you get the element name for that seat. The **Board**
+toggle switches between the classic arcade look (black, green wireframe) and the
+instrument-console one. Both are remembered per browser.
+
 **Local** — everything runs in the tab. Toggle any seat between `YOU` and `CPU`;
 set them all to CPU and it plays itself.
 
