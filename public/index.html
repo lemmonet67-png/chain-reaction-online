@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0A0F14">
+<title>Chain Reaction — Critical Mass</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --ink:     #0A0F14;
+    --panel:   #101922;
+    --panel-2: #16212C;
+    --rule:    #1B2733;
+    --text:    #BFD0DC;
+    --muted:   #63798B;
+    --good:    #2FD9A8;
+    --warn:    #FFC23D;
+    --bad:     #FF4A55;
+    --turn:    #FF4A55;
+    --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; }
+  body{
+    min-height:100vh;
+    background: radial-gradient(120% 90% at 50% -10%, #14202B 0%, var(--ink) 62%) fixed;
+    color:var(--text);
+    font-family:var(--sans);
+    font-size:15px;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .shell{ max-width:1180px; margin:0 auto; padding:24px 20px 56px; display:flex; flex-direction:column; gap:20px; }
+
+  header{
+    display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between;
+    gap:16px 24px; border-bottom:1px solid var(--rule); padding-bottom:16px;
+  }
+  .plate h1{
+    margin:0; font-family:var(--mono); font-size:clamp(18px,3.4vw,27px); font-weight:600;
+    letter-spacing:.34em; text-indent:.34em; color:#E6F0F7;
+  }
+  .plate p{
+    margin:5px 0 0; font-family:var(--mono); font-size:11px; letter-spacing:.22em;
+    text-transform:uppercase; color:var(--muted);
+  }
+  .banner{
+    display:flex; align-items:center; gap:10px;
+    font-family:var(--mono); font-size:12px; letter-spacing:.16em; text-transform:uppercase;
+    padding:9px 14px; background:var(--panel);
+    border:1px solid var(--rule); border-left:3px solid var(--turn);
+    color:#DCE8F0; min-height:20px;
+  }
+  .pip{ width:9px; height:9px; border-radius:50%; background:var(--turn); box-shadow:0 0 10px var(--turn); flex:none; }
+  .banner.live .pip{ animation:breathe 1.4s ease-in-out infinite; }
+  @keyframes breathe{ 50%{ opacity:.28; transform:scale(.72); } }
+
+  main{ display:grid; grid-template-columns:minmax(0,1fr) 312px; gap:22px; align-items:start; }
+  @media (max-width:880px){ main{ grid-template-columns:minmax(0,1fr); } }
+
+  .board-wrap{
+    position:relative; width:100%; max-height:min(74vh,780px); margin-inline:auto;
+    background:linear-gradient(180deg,#0D141B,#0A1016);
+    border:1px solid var(--rule);
+    box-shadow:inset 0 0 70px rgba(0,0,0,.65);
+  }
+  .board-wrap canvas{ display:block; width:100%; height:100%; touch-action:manipulation; }
+  .board-wrap:focus-within{ border-color:color-mix(in srgb,var(--turn) 55%,var(--rule)); }
+  canvas:focus{ outline:none; }
+  canvas:focus-visible{ outline:2px solid var(--turn); outline-offset:-2px; }
+  .veil{
+    position:absolute; inset:0; display:none; place-items:center; text-align:center;
+    background:rgba(8,13,18,.82); backdrop-filter:blur(2px);
+    font-family:var(--mono); font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--muted);
+    padding:24px;
+  }
+  .veil[data-on="1"]{ display:grid; }
+
+  .console{ display:flex; flex-direction:column; gap:14px; }
+  .card{ background:var(--panel); border:1px solid var(--rule); }
+  .card > h2{
+    margin:0; padding:9px 13px;
+    font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.24em;
+    text-transform:uppercase; color:var(--muted);
+    border-bottom:1px solid var(--rule); background:var(--panel-2);
+    display:flex; justify-content:space-between; align-items:center; gap:8px;
+  }
+  .card-body{ padding:11px 13px; display:flex; flex-direction:column; gap:9px; }
+
+  .chip{
+    display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:10px;
+    padding:8px 10px; border:1px solid var(--rule); background:#0C141C;
+    font-family:var(--mono); font-size:12px; letter-spacing:.08em;
+    transition:border-color .18s, background .18s;
+  }
+  .chip[data-active="1"]{ border-color:var(--pc); background:color-mix(in srgb,var(--pc) 9%,#0C141C); }
+  .chip[data-out="1"]{ opacity:.34; }
+  .chip[data-out="1"] .nm{ text-decoration:line-through; }
+  .chip[data-out="1"] .swatch{ box-shadow:none; }
+  .swatch{ width:11px; height:11px; background:var(--pc); box-shadow:0 0 9px var(--pc); }
+  .nm{ color:#D6E4EE; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .nm i{ font-style:normal; color:var(--muted); font-size:10px; letter-spacing:.14em; }
+  .orbs{ font-variant-numeric:tabular-nums; color:var(--pc); }
+  .tag{
+    font-family:var(--mono); font-size:9px; letter-spacing:.14em; padding:3px 6px;
+    border:1px solid var(--rule); color:var(--muted); background:transparent; white-space:nowrap;
+  }
+  button.tag{ cursor:pointer; }
+  button.tag:hover{ color:var(--text); border-color:var(--muted); }
+  .tag[data-state="live"]{ color:var(--good); border-color:color-mix(in srgb,var(--good) 40%,var(--rule)); }
+  .tag[data-state="gone"]{ color:var(--warn); border-color:color-mix(in srgb,var(--warn) 40%,var(--rule)); }
+
+  .readout{ display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--rule); border:1px solid var(--rule); }
+  .stat{ background:#0C141C; padding:9px 10px; }
+  .stat b{ display:block; font-family:var(--mono); font-size:19px; font-weight:600; font-variant-numeric:tabular-nums; color:#E6F0F7; line-height:1.15; }
+  .stat span{ display:block; margin-top:2px; font-family:var(--mono); font-size:9px; letter-spacing:.15em; text-transform:uppercase; color:var(--muted); }
+
+  .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .row > label, .lbl{ font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); }
+  .seg{ display:flex; border:1px solid var(--rule); }
+  .seg button{
+    font-family:var(--mono); font-size:11px; letter-spacing:.06em; padding:5px 9px; cursor:pointer;
+    background:transparent; color:var(--muted); border:0; border-left:1px solid var(--rule);
+  }
+  .seg button:first-child{ border-left:0; }
+  .seg button:hover{ color:var(--text); }
+  .seg button[aria-pressed="true"]{ background:var(--turn); color:#080D12; font-weight:600; }
+  .seg button:focus-visible{ outline:2px solid var(--turn); outline-offset:-2px; }
+
+  .btn{
+    width:100%; font-family:var(--mono); font-size:12px; font-weight:600;
+    letter-spacing:.2em; text-transform:uppercase; padding:11px; cursor:pointer;
+    background:var(--turn); color:#080D12; border:0;
+  }
+  .btn:hover{ filter:brightness(1.12); }
+  .btn:disabled{ opacity:.35; cursor:not-allowed; filter:none; }
+  .btn.ghost{ background:transparent; color:var(--muted); border:1px solid var(--rule); }
+  .btn.ghost:hover{ color:var(--text); border-color:var(--muted); filter:none; }
+  .btn:focus-visible{ outline:2px solid #E6F0F7; outline-offset:2px; }
+
+  .code-field{ display:flex; gap:8px; }
+  .code-field input{
+    flex:1; min-width:0; font-family:var(--mono); font-size:15px; letter-spacing:.32em;
+    text-transform:uppercase; text-align:center;
+    padding:9px 10px; background:#0C141C; color:#E6F0F7; border:1px solid var(--rule);
+  }
+  .code-field input::placeholder{ color:#3B4B59; letter-spacing:.2em; }
+  .code-field input:focus-visible{ outline:2px solid var(--turn); outline-offset:-1px; }
+
+  .roomcode{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:10px 12px; background:#0C141C; border:1px solid var(--rule);
+  }
+  .roomcode b{
+    font-family:var(--mono); font-size:26px; font-weight:600; letter-spacing:.28em;
+    text-indent:.28em; color:#E6F0F7; line-height:1;
+  }
+
+  .link{
+    font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted);
+    background:#0C141C; border:1px solid var(--rule); padding:7px 9px;
+    overflow-x:auto; white-space:nowrap;
+  }
+
+  details.card summary{
+    padding:9px 13px; font-family:var(--mono); font-size:10px; font-weight:600;
+    letter-spacing:.24em; text-transform:uppercase; color:var(--muted); cursor:pointer;
+    list-style:none; background:var(--panel-2);
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  details.card summary::-webkit-details-marker{ display:none; }
+  details.card summary::after{ content:"+"; font-size:13px; }
+  details.card[open] summary{ border-bottom:1px solid var(--rule); }
+  details.card[open] summary::after{ content:"–"; }
+  details.card summary:focus-visible{ outline:2px solid var(--turn); outline-offset:-2px; }
+  .rules{ padding:12px 14px; font-size:13.5px; color:#A9BDCB; }
+  .rules p{ margin:0 0 10px; }
+  .rules p:last-child{ margin-bottom:0; }
+  .rules b{ color:#DCE8F0; font-weight:600; }
+  .rules code{ font-family:var(--mono); font-size:12px; color:var(--turn); background:#0C141C; padding:1px 4px; border:1px solid var(--rule); }
+
+  .hint{ font-family:var(--mono); font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); text-align:center; margin:0; }
+  .hint[data-tone="bad"]{ color:var(--bad); }
+  .net{ display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:9px; letter-spacing:.14em; }
+  .net .dot{ width:7px; height:7px; border-radius:50%; background:var(--muted); }
+  .net[data-net="open"] .dot{ background:var(--good); box-shadow:0 0 8px var(--good); }
+  .net[data-net="open"]{ color:var(--good); }
+  .net[data-net="lost"] .dot{ background:var(--bad); }
+  .net[data-net="lost"]{ color:var(--bad); }
+  .sr{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  [hidden]{ display:none !important; }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:.001ms !important; transition-duration:.001ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="plate">
+      <h1>CHAIN REACTION</h1>
+      <p>Critical mass · cascade capture</p>
+    </div>
+    <div class="banner live" id="banner"><span class="pip"></span><span id="bannerText">Strontium to place</span></div>
+  </header>
+
+  <main>
+    <div class="board-wrap" id="wrap">
+      <canvas id="board" role="application" tabindex="0"
+              aria-label="Chain Reaction board. Arrow keys move the cursor, Enter places an orb."></canvas>
+      <div class="veil" id="veil"><span id="veilText"></span></div>
+    </div>
+
+    <div class="console">
+      <section class="card">
+        <h2>Mode</h2>
+        <div class="card-body">
+          <div class="row">
+            <label id="lblMode">Play</label>
+            <div class="seg" id="segMode" role="group" aria-labelledby="lblMode"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- online: lobby -->
+      <section class="card" id="lobbyCard" hidden>
+        <h2>Room <span class="net" id="netState" data-net="idle"><span class="dot"></span><span id="netText">offline</span></span></h2>
+        <div class="card-body" id="lobbyBody">
+          <div id="preJoin">
+            <div class="row">
+              <label id="lblRP">Reactors</label>
+              <div class="seg" id="segRoomPlayers" role="group" aria-labelledby="lblRP"></div>
+            </div>
+            <div class="row" style="margin-top:9px">
+              <label id="lblRS">Grid</label>
+              <div class="seg" id="segRoomSize" role="group" aria-labelledby="lblRS"></div>
+            </div>
+            <button class="btn" id="btnCreate" style="margin-top:11px">Create room</button>
+            <p class="hint" style="margin:11px 0 8px">or join one</p>
+            <div class="code-field">
+              <input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off"
+                     autocapitalize="characters" spellcheck="false" aria-label="Room code">
+              <button class="btn ghost" id="btnJoin" style="width:auto; padding:9px 14px">Join</button>
+            </div>
+          </div>
+
+          <div id="inRoom" hidden>
+            <div class="roomcode">
+              <b id="roomCode">····</b>
+              <button class="tag" id="btnCopy" type="button">Copy link</button>
+            </div>
+            <p class="link" id="roomLink"></p>
+            <button class="btn ghost" id="btnRestart" style="margin-top:9px" hidden>Restart run</button>
+            <button class="btn ghost" id="btnLeave" style="margin-top:9px">Leave room</button>
+          </div>
+
+          <p class="hint" id="lobbyMsg" hidden></p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Reactors</h2>
+        <div class="card-body" id="roster"></div>
+      </section>
+
+      <section class="card">
+        <h2>Readout</h2>
+        <div class="readout">
+          <div class="stat"><b id="statTurn">1</b><span>Turn</span></div>
+          <div class="stat"><b id="statOrbs">0</b><span>Orbs</span></div>
+          <div class="stat"><b id="statChain">0</b><span>Best chain</span></div>
+        </div>
+      </section>
+
+      <!-- local: setup -->
+      <section class="card" id="localCard">
+        <h2>Setup</h2>
+        <div class="card-body">
+          <div class="row">
+            <label id="lblPlayers">Reactors</label>
+            <div class="seg" id="segPlayers" role="group" aria-labelledby="lblPlayers"></div>
+          </div>
+          <div class="row">
+            <label id="lblSize">Grid</label>
+            <div class="seg" id="segSize" role="group" aria-labelledby="lblSize"></div>
+          </div>
+          <button class="btn" id="newGame">New run</button>
+          <p class="hint">Tap a reactor's tag to swap human / CPU</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-body">
+          <div class="row">
+            <label id="lblSound">Audio</label>
+            <div class="seg" id="segSound" role="group" aria-labelledby="lblSound"></div>
+          </div>
+        </div>
+      </section>
+
+      <details class="card">
+        <summary>Rules</summary>
+        <div class="rules">
+          <p>Place one orb per turn into an <b>empty cell</b> or a cell <b>you already own</b>. Never into an opponent's.</p>
+          <p>A cell's <b>critical mass</b> is its number of orthogonal neighbours — <code>2</code> in a corner, <code>3</code> on an edge, <code>4</code> inside. Reach it and the cell detonates, sending one orb to each neighbour.</p>
+          <p>Every cell that receives an orb <b>flips to your colour</b>, orbs and all. If it hits its own critical mass it detonates too, and the chain runs until the board settles.</p>
+          <p>Once everyone has had a turn, any reactor left with <b>zero orbs is out</b>. Last one standing wins.</p>
+        </div>
+      </details>
+    </div>
+  </main>
+
+  <p class="sr" id="live" aria-live="polite"></p>
+</div>
+
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
