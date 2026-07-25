@@ -16,7 +16,7 @@
   const { PLAYERS, SIZES } = E;
 
   const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const STORE = { room: "cr.room", token: "cr.token", sound: "cr.sound" };
+  const STORE = { room: "cr.room", token: "cr.token", sound: "cr.sound", style: "cr.style" };
 
   const $ = id => document.getElementById(id);
   const store = {
@@ -24,6 +24,33 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
     del(k) { try { localStorage.removeItem(k); } catch (_) {} }
   };
+
+  /* Two board looks. "console" is the instrument-panel treatment; "classic" is
+     the arcade one — black ground, extruded green wireframe, glossy orbs.
+     Colours are display-only; the server never sees them. */
+  const THEMES = {
+    console: {
+      ground: "linear-gradient(180deg,#0D141B,#0A1016)",
+      border: "#1B2733", inset: "inset 0 0 70px rgba(0,0,0,.65)",
+      line: "#1B2733", line2: null, depth: 0, lineGlow: 0,
+      tint: true, glow: 1.9, shade: 1,
+      orb: 0.115, spread: 0.155, gloss: 0.35,
+      colors: E.PLAYERS.map(p => p.color)
+    },
+    classic: {
+      ground: "#000000",
+      border: "#0B3D0B", inset: "none",
+      line: "#1CE81C", line2: "#0A7A0A", depth: 0.11, lineGlow: 5,
+      tint: false, glow: 0.45, shade: 0.5,
+      orb: 0.155, spread: 0.14, gloss: 0.2,
+      colors: ["#FF2020", "#22DD22", "#2B6BFF", "#FFDD00",
+               "#FF3BD4", "#22DDDD", "#FF8800", "#A64BFF"]
+    }
+  };
+
+  let boardStyle = store.get(STORE.style) === "console" ? "console" : "classic";
+  const theme = () => THEMES[boardStyle];
+  const colorOf = p => theme().colors[p];
 
   /* ── state ───────────────────────────────────────────────────────────── */
 
@@ -324,7 +351,7 @@
 
   function orbOffsets(n, cap, t) {
     if (n <= 0) return [];
-    const R = cell * 0.155;
+    const R = cell * theme().spread;
     if (n === 1) return [[0, REDUCED ? 0 : Math.sin(t / 620) * cell * 0.012]];
     // Spin faster the closer the cell is to going critical.
     const tension = Math.min(1, (n - 1) / Math.max(1, cap - 1));
@@ -335,18 +362,69 @@
     });
   }
 
+  /** Darken a #rrggbb toward black by factor f (1 = unchanged). */
+  function shade(hex, f) {
+    if (f >= 1) return hex;
+    const n = parseInt(hex.slice(1), 16);
+    const c = v => Math.round(v * f).toString(16).padStart(2, "0");
+    return "#" + c((n >> 16) & 255) + c((n >> 8) & 255) + c(n & 255);
+  }
+
   function drawOrb(x, y, r, color) {
-    const g = ctx.createRadialGradient(x - r * 0.32, y - r * 0.36, r * 0.1, x, y, r);
+    const T = theme();
+    // Highlight offset up-left, colour through the middle, darker at the rim —
+    // the rim shading is what reads as a sphere rather than a flat disc.
+    const g = ctx.createRadialGradient(x - r * 0.34, y - r * 0.38, r * 0.08, x, y, r);
     g.addColorStop(0, "#FFFFFF");
-    g.addColorStop(0.35, color);
-    g.addColorStop(1, color);
+    g.addColorStop(T.gloss, color);
+    g.addColorStop(1, shade(color, T.shade));
     ctx.save();
-    ctx.shadowColor = color;
-    ctx.shadowBlur = r * 1.9;
+    if (T.glow > 0) { ctx.shadowColor = color; ctx.shadowBlur = r * T.glow; }
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  /** Flat lattice, or an extruded wireframe when the theme asks for depth. */
+  function drawGrid(C, R) {
+    const T = theme();
+    const d = T.depth * cell;
+
+    const plane = (dx, dy, color, w) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      for (let c = 0; c <= C; c++) {
+        ctx.moveTo(ox + c * cell + dx, oy + dy);
+        ctx.lineTo(ox + c * cell + dx, oy + R * cell + dy);
+      }
+      for (let r = 0; r <= R; r++) {
+        ctx.moveTo(ox + dx, oy + r * cell + dy);
+        ctx.lineTo(ox + C * cell + dx, oy + r * cell + dy);
+      }
+      ctx.stroke();
+    };
+
+    if (d > 0) {
+      plane(d, -d, T.line2, 1);                 // back plane, pushed up-right
+      ctx.strokeStyle = T.line2;                // struts joining the planes
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let c = 0; c <= C; c++) {
+        for (let r = 0; r <= R; r++) {
+          const x = ox + c * cell, y = oy + r * cell;
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + d, y - d);
+        }
+      }
+      ctx.stroke();
+    }
+
+    ctx.save();
+    if (T.lineGlow) { ctx.shadowColor = T.line; ctx.shadowBlur = T.lineGlow; }
+    plane(0, 0, T.line, d > 0 ? 1.3 : 1);
     ctx.restore();
   }
 
@@ -365,26 +443,24 @@
       shake *= 0.86;
     }
 
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "#1B2733";
-    ctx.beginPath();
-    for (let c = 0; c <= C; c++) { ctx.moveTo(ox + c * cell, oy); ctx.lineTo(ox + c * cell, oy + R * cell); }
-    for (let r = 0; r <= R; r++) { ctx.moveTo(ox, oy + r * cell); ctx.lineTo(ox + C * cell, oy + r * cell); }
-    ctx.stroke();
+    drawGrid(C, R);
 
-    const orbR = cell * 0.115;
+    const T = theme();
+    const orbR = cell * T.orb;
     for (let i = 0; i < display.owner.length; i++) {
       const ow = display.owner[i];
       if (ow === -1) continue;
-      const col = PLAYERS[ow].color;
+      const col = colorOf(ow);
       const x = cx(i), y = cy(i);
       const gx = ox + (i % C) * cell, gy = oy + (((i / C) | 0)) * cell;
 
-      ctx.fillStyle = col + "14";
-      ctx.fillRect(gx + 1, gy + 1, cell - 2, cell - 2);
-      ctx.strokeStyle = col + "44";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(gx + 1.5, gy + 1.5, cell - 3, cell - 3);
+      if (T.tint) {
+        ctx.fillStyle = col + "14";
+        ctx.fillRect(gx + 1, gy + 1, cell - 2, cell - 2);
+        ctx.strokeStyle = col + "44";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(gx + 1.5, gy + 1.5, cell - 3, cell - 3);
+      }
 
       if (display.count[i] === cap[i] - 1) {          // one orb from detonating
         ctx.save();
@@ -407,7 +483,7 @@
       const ease = k * k * (3 - 2 * k);
       const rung = new Set();
       for (const t of travelers) {
-        const col = PLAYERS[t.owner].color;
+        const col = colorOf(t.owner);
         if (!rung.has(t.from)) {
           rung.add(t.from);
           ctx.save();
@@ -425,7 +501,7 @@
     }
 
     if (cursorShown && !animating && logical && !logical.over && myTurn()) {
-      const col = PLAYERS[logical.cur].color;
+      const col = colorOf(logical.cur);
       const x0 = ox + (cursor % C) * cell, y0 = oy + (((cursor / C) | 0)) * cell;
       const a = cell * 0.24;
       ctx.strokeStyle = col;
@@ -493,14 +569,14 @@
   function syncUI() {
     if (!logical || !display) return;
     const st = logical;
-    document.documentElement.style.setProperty("--turn", PLAYERS[st.cur].color);
+    document.documentElement.style.setProperty("--turn", colorOf(st.cur));
 
     const orbs = E.orbTotals(display);
     $("roster").replaceChildren(...Array.from({ length: st.numPlayers }, (_, p) => {
       const info = seatInfo(p);
       const chip = document.createElement("div");
       chip.className = "chip";
-      chip.style.setProperty("--pc", PLAYERS[p].color);
+      chip.style.setProperty("--pc", colorOf(p));
       chip.dataset.active = !st.over && p === st.cur ? "1" : "0";
       chip.dataset.out = st.alive[p] ? "0" : "1";
 
@@ -594,6 +670,15 @@
     syncUI();
   }
 
+  /** Push the board look onto the container the canvas sits in. */
+  function applyTheme() {
+    const T = theme();
+    wrap.style.background = T.ground;
+    wrap.style.borderColor = T.border;
+    wrap.style.boxShadow = T.inset;
+    syncUI();
+  }
+
   function segment(host, items, isOn, pick) {
     host.replaceChildren(...items.map((label, i) => {
       const b = document.createElement("button");
@@ -613,6 +698,12 @@
     segment($("segSize"), SIZES.map(s => s.label), i => localSize === i, i => { localSize = i; syncSegments(); newLocalGame(); });
     segment($("segRoomPlayers"), COUNTS, i => roomPlayers === i + 2, i => { roomPlayers = i + 2; syncSegments(); });
     segment($("segRoomSize"), SIZES.map(s => s.label), i => roomSize === i, i => { roomSize = i; syncSegments(); });
+    segment($("segStyle"), ["Classic", "Console"], i => (i === 0) === (boardStyle === "classic"), i => {
+      boardStyle = i === 0 ? "classic" : "console";
+      store.set(STORE.style, boardStyle);
+      syncSegments();
+      applyTheme();
+    });
     segment($("segSound"), ["Off", "On"], i => soundOn === !!i, i => {
       soundOn = !!i;
       store.set(STORE.sound, soundOn ? "1" : "0");
@@ -697,6 +788,7 @@
 
   syncSegments();
   newLocalGame();
+  applyTheme();
   syncLobby();
 
   if ((location.hash || "").replace("#", "").trim().length === 4) setMode("online");
