@@ -16,7 +16,6 @@
   const { PLAYERS, SIZES } = E;
 
   const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const WAVE_MS = REDUCED ? 70 : 190;
   const STORE = { room: "cr.room", token: "cr.token", sound: "cr.sound" };
 
   const $ = id => document.getElementById(id);
@@ -32,10 +31,15 @@
   let logical = null;                       // settled game state
   let display = null;                       // what the canvas is showing
   let pendingWaves = [];                    // cascade waves left to animate
-  let travelers = [], waveStart = 0, shake = 0, chainShown = 0;
+  let travelers = [], waveStart = 0, waveDur = 190, shake = 0, chainShown = 0;
   let animating = false;
+  // Moves can arrive faster than they animate (a CPU replies in 550ms, a long
+  // chain takes longer). Queue them so no cascade is ever skipped, and speed up
+  // to catch up rather than dropping frames of the chain.
+  let moveQueue = [];
 
-  let localCPU = [false, true, true, true];
+  // Seat 1 is you, every other seat defaults to the CPU.
+  let localCPU = Array.from({ length: E.MAX_PLAYERS }, (_, i) => i !== 0);
   let localPlayers = 2, localSize = 1;
   let soundOn = store.get(STORE.sound) === "1";
 
@@ -97,6 +101,19 @@
 
   /* ── cascade animation ───────────────────────────────────────────────── */
 
+  /** How long the current wave should take — shorter when moves are backing up. */
+  function waveMs() {
+    if (REDUCED) return 70;
+    if (moveQueue.length >= 3) return 55;
+    if (moveQueue.length >= 1) return 110;
+    return 190;
+  }
+
+  function playNextMove() {
+    const m = moveQueue.shift();
+    if (m) animate(m.idx, m.player, m.waves, m.state);
+  }
+
   /** Show a move: seat the orb, then walk `waves` one at a time. */
   function animate(idx, player, waves, settled) {
     display.count[idx]++;
@@ -127,6 +144,7 @@
     shake = REDUCED ? 0 : Math.min(5, 1 + wave.length * 0.5);
     blip(180 + Math.min(wave.length, 8) * 26, 0.16, "sine", 0.11);
     waveStart = performance.now();
+    waveDur = waveMs();
     syncUI();
   }
 
@@ -144,6 +162,7 @@
     // Snap to the settled board — guards against any drift in a long cascade.
     display = E.cloneState(logical);
     syncUI();
+    if (moveQueue.length) { playNextMove(); return; }
     if (logical.over) {
       announce(logical.winner >= 0 ? PLAYERS[logical.winner].name + " wins" : "Stalemate");
     } else {
@@ -158,7 +177,7 @@
     const s = SIZES[localSize];
     logical = E.createState(s.cols, s.rows, localPlayers);
     display = E.cloneState(logical);
-    pendingWaves = []; travelers = []; animating = false;
+    pendingWaves = []; travelers = []; animating = false; moveQueue = [];
     cursor = ((s.rows / 2) | 0) * s.cols + ((s.cols / 2) | 0);
     wrap.style.aspectRatio = s.cols + " / " + s.rows;
     resize(); syncUI();
@@ -256,15 +275,8 @@
         break;
       }
       case "move": {
-        seats = seats.length ? seats : [];
-        if (animating) {                      // a burst arrived mid-cascade
-          logical = m.state;
-          display = E.cloneState(m.state);
-          pendingWaves = []; travelers = []; animating = false;
-          syncUI();
-        } else {
-          animate(m.idx, m.player, m.waves, m.state);
-        }
+        moveQueue.push(m);
+        if (!animating) playNextMove();
         break;
       }
       case "error": {
@@ -287,7 +299,7 @@
     logical = st;
     if (animating && !reset) return;          // let the current cascade land first
     display = E.cloneState(st);
-    pendingWaves = []; travelers = []; animating = false;
+    pendingWaves = []; travelers = []; animating = false; moveQueue = [];
     if (shapeChanged) {
       wrap.style.aspectRatio = st.cols + " / " + st.rows;
       cursor = ((st.rows / 2) | 0) * st.cols + ((st.cols / 2) | 0);
@@ -341,7 +353,7 @@
   function draw(now) {
     requestAnimationFrame(draw);
     if (!display || !cell) return;
-    if (animating && travelers.length && now - waveStart >= WAVE_MS) landWave();
+    if (animating && travelers.length && now - waveStart >= waveDur) landWave();
 
     const C = display.cols, R = display.rows;
     const { cap } = E.topo(C, R);
@@ -391,7 +403,7 @@
     }
 
     if (travelers.length) {
-      const k = Math.min(1, (now - waveStart) / WAVE_MS);
+      const k = Math.min(1, (now - waveStart) / waveDur);
       const ease = k * k * (3 - 2 * k);
       const rung = new Set();
       for (const t of travelers) {
@@ -593,11 +605,13 @@
     }));
   }
 
+  const COUNTS = Array.from({ length: E.MAX_PLAYERS - 1 }, (_, i) => String(i + 2));
+
   function syncSegments() {
     segment($("segMode"), ["Local", "Online"], i => (i === 1) === (mode === "online"), i => setMode(i === 1 ? "online" : "local"));
-    segment($("segPlayers"), ["2", "3", "4"], i => localPlayers === i + 2, i => { localPlayers = i + 2; syncSegments(); newLocalGame(); });
+    segment($("segPlayers"), COUNTS, i => localPlayers === i + 2, i => { localPlayers = i + 2; syncSegments(); newLocalGame(); });
     segment($("segSize"), SIZES.map(s => s.label), i => localSize === i, i => { localSize = i; syncSegments(); newLocalGame(); });
-    segment($("segRoomPlayers"), ["2", "3", "4"], i => roomPlayers === i + 2, i => { roomPlayers = i + 2; syncSegments(); });
+    segment($("segRoomPlayers"), COUNTS, i => roomPlayers === i + 2, i => { roomPlayers = i + 2; syncSegments(); });
     segment($("segRoomSize"), SIZES.map(s => s.label), i => roomSize === i, i => { roomSize = i; syncSegments(); });
     segment($("segSound"), ["Off", "On"], i => soundOn === !!i, i => {
       soundOn = !!i;
@@ -628,6 +642,7 @@
     clearTimeout(retryTimer);
     clearInterval(pingTimer);
     intent = null;
+    moveQueue = [];
     if (net) { net.onclose = null; net.close(); net = null; }
     if (!reconnectable) {
       store.del(STORE.room); store.del(STORE.token);

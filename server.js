@@ -244,8 +244,10 @@ function handle(sock, msg) {
 
     case "create": {
       leaveCurrent(sock);
-      const sizeIdx = Number.isInteger(msg.sizeIdx) ? Math.min(2, Math.max(0, msg.sizeIdx)) : 1;
-      const numPlayers = Number.isInteger(msg.numPlayers) ? Math.min(4, Math.max(2, msg.numPlayers)) : 2;
+      const sizeIdx = Number.isInteger(msg.sizeIdx)
+        ? Math.min(Engine.SIZES.length - 1, Math.max(0, msg.sizeIdx)) : 1;
+      const numPlayers = Number.isInteger(msg.numPlayers)
+        ? Math.min(Engine.MAX_PLAYERS, Math.max(2, msg.numPlayers)) : 2;
       const room = createRoom(sizeIdx, numPlayers);
       attach(sock, room, 0, token());
       return;

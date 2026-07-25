@@ -119,6 +119,10 @@
   .stat span{ display:block; margin-top:2px; font-family:var(--mono); font-size:9px; letter-spacing:.15em; text-transform:uppercase; color:var(--muted); }
 
   .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  /* Options that outgrow one line: label above, buttons wrapping beneath. */
+  .row.stack{ flex-direction:column; align-items:stretch; gap:7px; }
+  .row.stack .seg{ flex-wrap:wrap; }
+  .row.stack .seg button{ flex:1 1 40px; text-align:center; }
   .row > label, .lbl{ font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); }
   .seg{ display:flex; border:1px solid var(--rule); }
   .seg button{
@@ -231,11 +235,11 @@
         <h2>Room <span class="net" id="netState" data-net="idle"><span class="dot"></span><span id="netText">offline</span></span></h2>
         <div class="card-body" id="lobbyBody">
           <div id="preJoin">
-            <div class="row">
+            <div class="row stack">
               <label id="lblRP">Reactors</label>
               <div class="seg" id="segRoomPlayers" role="group" aria-labelledby="lblRP"></div>
             </div>
-            <div class="row" style="margin-top:9px">
+            <div class="row stack" style="margin-top:9px">
               <label id="lblRS">Grid</label>
               <div class="seg" id="segRoomSize" role="group" aria-labelledby="lblRS"></div>
             </div>
@@ -280,11 +284,11 @@
       <section class="card" id="localCard">
         <h2>Setup</h2>
         <div class="card-body">
-          <div class="row">
+          <div class="row stack">
             <label id="lblPlayers">Reactors</label>
             <div class="seg" id="segPlayers" role="group" aria-labelledby="lblPlayers"></div>
           </div>
-          <div class="row">
+          <div class="row stack">
             <label id="lblSize">Grid</label>
             <div class="seg" id="segSize" role="group" aria-labelledby="lblSize"></div>
           </div>

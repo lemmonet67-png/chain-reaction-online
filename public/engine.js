@@ -11,16 +11,27 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  /* Flame-emission colours, spread around the hue wheel so eight stay
+     distinguishable on a crowded board. */
   const PLAYERS = [
-    { name: "STRONTIUM", color: "#FF4A55" },
-    { name: "COPPER",    color: "#2FD9A8" },
-    { name: "SODIUM",    color: "#FFC23D" },
-    { name: "POTASSIUM", color: "#A98BFF" }
+    { name: "STRONTIUM", color: "#FF4A55" },   // crimson
+    { name: "COPPER",    color: "#2FD9A8" },   // teal
+    { name: "SODIUM",    color: "#FFD23D" },   // yellow
+    { name: "POTASSIUM", color: "#A98BFF" },   // lilac
+    { name: "BARIUM",    color: "#8FE04A" },   // apple green
+    { name: "LITHIUM",   color: "#FF5FA2" },   // magenta
+    { name: "CAESIUM",   color: "#4D9BFF" },   // blue
+    { name: "CALCIUM",   color: "#FF8A3D" }    // orange
   ];
+  const MAX_PLAYERS = PLAYERS.length;
+
   const SIZES = [
-    { label: "5×7",  cols: 5, rows: 7  },
-    { label: "6×9",  cols: 6, rows: 9  },
-    { label: "8×11", cols: 8, rows: 11 }
+    { label: "5×7",   cols: 5,  rows: 7  },
+    { label: "6×9",   cols: 6,  rows: 9  },
+    { label: "7×10",  cols: 7,  rows: 10 },
+    { label: "8×11",  cols: 8,  rows: 11 },
+    { label: "10×14", cols: 10, rows: 14 },
+    { label: "12×16", cols: 12, rows: 16 }
   ];
 
   /* Neighbour lists and critical masses depend only on the grid shape, so
@@ -61,6 +72,15 @@
   }
 
   const cloneState = st => JSON.parse(JSON.stringify(st));
+
+  /* The search clones a state per candidate move, which on a 12×16 board is
+     ~200 clones per ply — far too hot for a JSON round trip. */
+  const fastClone = st => ({
+    cols: st.cols, rows: st.rows, numPlayers: st.numPlayers,
+    count: st.count.slice(), owner: st.owner.slice(), alive: st.alive.slice(),
+    cur: st.cur, turnCount: st.turnCount,
+    largestChain: st.largestChain, over: st.over, winner: st.winner
+  });
 
   function orbTotals(st) {
     const t = new Array(st.numPlayers).fill(0);
@@ -200,7 +220,7 @@
   }
 
   function tryMove(st, idx, p) {
-    const next = cloneState(st);
+    const next = fastClone(st);
     applyMove(next, idx, p);
     return next;
   }
@@ -217,7 +237,11 @@
     scored.sort((a, b) => b.sc - a.sc);
     if (scored[0].sc >= 1e6) return scored[0].m;
 
-    const top = scored.slice(0, Math.min(8, scored.length));
+    // The reply ply costs candidates × opponent moves simulations, which grows
+    // with the square of the board — narrow the shortlist as the grid gets big.
+    const n = st.owner.length;
+    const width = n > 150 ? 3 : n > 100 ? 5 : 8;
+    const top = scored.slice(0, Math.min(width, scored.length));
     for (const e of top) {
       if (e.after.over) continue;
       const foe = e.after.cur;
@@ -238,8 +262,8 @@
   }
 
   return {
-    PLAYERS, SIZES,
-    topo, createState, cloneState,
+    PLAYERS, SIZES, MAX_PLAYERS,
+    topo, createState, cloneState, fastClone,
     orbTotals, cellTotals, soleOwner,
     isLegal, legalMoves, nextAlive,
     applyMove, chooseMove
