@@ -33,7 +33,7 @@
       ground: "linear-gradient(180deg,#0D141B,#0A1016)",
       border: "#1B2733", inset: "inset 0 0 70px rgba(0,0,0,.65)",
       line: "#1B2733", line2: null, depth: 0, lineGlow: 0,
-      tint: true, glow: 1.9, shade: 1,
+      tint: true, tintGrid: false, glow: 1.9, shade: 1,
       orb: 0.115, spread: 0.155, gloss: 0.35,
       colors: E.PLAYERS.map(p => p.color)
     },
@@ -41,7 +41,7 @@
       ground: "#000000",
       border: "#0B3D0B", inset: "none",
       line: "#1CE81C", line2: "#0A7A0A", depth: 0.11, lineGlow: 5,
-      tint: false, glow: 0.45, shade: 0.5,
+      tint: false, tintGrid: true, glow: 0.45, shade: 0.5,
       orb: 0.155, spread: 0.14, gloss: 0.2,
       colors: ["#FF2020", "#22DD22", "#2B6BFF", "#FFDD00",
                "#FF3BD4", "#22DDDD", "#FF8800", "#A64BFF"]
@@ -64,6 +64,9 @@
   let pendingWaves = [];                    // cascade waves left to animate
   let travelers = [], waveStart = 0, waveDur = 190, shake = 0, chainShown = 0;
   let animating = false;
+  // Whose move is on screen. During a cascade `logical.cur` has already moved
+  // on to the next player, but the chain belongs to whoever placed the orb.
+  let shownPlayer = -1;
   // Moves can arrive faster than they animate (a CPU replies in 550ms, a long
   // chain takes longer). Queue them so no cascade is ever skipped, and speed up
   // to catch up rather than dropping frames of the chain.
@@ -153,6 +156,7 @@
     pendingWaves = waves.slice();
     chainShown = 0;
     animating = true;
+    shownPlayer = player;
     travelers = [];
     blip(660, 0.07, "square", 0.06);
     stepWave();
@@ -190,6 +194,7 @@
 
   function finishAnimation() {
     animating = false;
+    shownPlayer = -1;
     // Snap to the settled board — guards against any drift in a long cascade.
     display = E.cloneState(logical);
     syncUI();
@@ -396,6 +401,19 @@
     const T = theme();
     const d = T.depth * cell;
 
+    // The lattice takes the colour of whoever is on the clock — the player
+    // mid-cascade, else the player to move, else the winner once it's over.
+    let front = T.line, back = T.line2;
+    if (T.tintGrid && logical) {
+      const who = shownPlayer >= 0 ? shownPlayer
+                : logical.over ? logical.winner
+                : logical.cur;
+      if (who >= 0) {
+        front = colorOf(who);
+        back = shade(front, 0.42);
+      }
+    }
+
     const plane = (dx, dy, color, w) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = w;
@@ -412,8 +430,8 @@
     };
 
     if (d > 0) {
-      plane(d, -d, T.line2, 1);                 // back plane, pushed up-right
-      ctx.strokeStyle = T.line2;                // struts joining the planes
+      plane(d, -d, back, 1);                    // back plane, pushed up-right
+      ctx.strokeStyle = back;                   // struts joining the planes
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let c = 0; c <= C; c++) {
@@ -427,8 +445,8 @@
     }
 
     ctx.save();
-    if (T.lineGlow) { ctx.shadowColor = T.line; ctx.shadowBlur = T.lineGlow; }
-    plane(0, 0, T.line, d > 0 ? 1.3 : 1);
+    if (T.lineGlow) { ctx.shadowColor = front; ctx.shadowBlur = T.lineGlow; }
+    plane(0, 0, front, d > 0 ? 1.3 : 1);
     ctx.restore();
   }
 
@@ -523,8 +541,27 @@
 
   /* ── input ───────────────────────────────────────────────────────────── */
 
+  /* Placing on pointerdown fires the moment a finger lands, so every scroll
+     gesture dropped an orb. Commit on release instead, and only when the
+     pointer stayed put — a drag is a scroll, not a tap. */
+  const TAP_SLOP = 12;                       // px of travel still counted as a tap
+  let press = null;
+
   canvas.addEventListener("pointerdown", e => {
+    press = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  });
+
+  // The browser fires this when it takes the gesture over to scroll.
+  canvas.addEventListener("pointercancel", () => { press = null; });
+  canvas.addEventListener("pointerleave", () => { press = null; });
+
+  canvas.addEventListener("pointerup", e => {
+    const p = press;
+    press = null;
+    if (!p || p.id !== e.pointerId) return;
+    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > TAP_SLOP) return;
     if (!display || animating) return;
+
     const r = canvas.getBoundingClientRect();
     const c = Math.floor((e.clientX - r.left - ox) / cell);
     const row = Math.floor((e.clientY - r.top - oy) / cell);
