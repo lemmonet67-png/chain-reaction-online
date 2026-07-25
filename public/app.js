@@ -16,7 +16,10 @@
   const { PLAYERS, SIZES } = E;
 
   const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const STORE = { room: "cr.room", token: "cr.token", sound: "cr.sound", style: "cr.style" };
+  const STORE = {
+    room: "cr.room", token: "cr.token", sound: "cr.sound",
+    style: "cr.style", name: "cr.name", vibrate: "cr.vibrate", colours: "cr.colours"
+  };
 
   const $ = id => document.getElementById(id);
   const store = {
@@ -25,36 +28,62 @@
     del(k) { try { localStorage.removeItem(k); } catch (_) {} }
   };
 
-  /* Two board looks. "console" is the instrument-panel treatment; "classic" is
-     the arcade one — black ground, extruded green wireframe, glossy orbs.
-     Colours are display-only; the server never sees them. */
+  /* ── board look ───────────────────────────────────────────────────────
+   *
+   * "original" reproduces the Android game this clones. Every number in it was
+   * measured off that game's own screenshots (480×800 images, 77.2px cells),
+   * not eyeballed:
+   *
+   *   back      the lattice is drawn twice — once at full size, once shrunk
+   *             toward the middle of the board — with a strut joining every
+   *             pair of vertices. That makes each cell an open box, and it is
+   *             why the depth appears to fan outward from the centre instead of
+   *             leaning one fixed way.
+   *   orbPlane  orbs sit half way into that box, so they drift off the flat
+   *             cell centre by more the further out they are.
+   *   gridDim   the whole lattice is the live player's colour at half strength.
+   *             Nothing else in the original is coloured, so this is the only
+   *             turn indicator it has.
+   *   rim       orbs are flat colour through the middle falling to this at the
+   *             edge. There is no white highlight — they read as lit from
+   *             inside, not polished.
+   *
+   * "console" is the instrument-panel look this project had before; it runs
+   * through the same code with the depth flattened out.
+   */
   const THEMES = {
-    console: {
-      ground: "linear-gradient(180deg,#0D141B,#0A1016)",
-      border: "#1B2733", inset: "inset 0 0 70px rgba(0,0,0,.65)",
-      line: "#1B2733", line2: null, depth: 0, lineGlow: 0,
-      tint: true, tintGrid: false, glow: 1.9, shade: 1,
-      orb: 0.115, spread: 0.155, gloss: 0.35,
-      colors: E.PLAYERS.map(p => p.color)
+    original: {
+      back: 0.926, orbPlane: 0.963, gridDim: 0.51, line: null,
+      orb: 0.233, cluster: 0.095, rim: 0.45, glow: 0, tintCell: false,
+      colors: PLAYERS.map(p => p.color)
     },
-    classic: {
-      ground: "#000000",
-      border: "#0B3D0B", inset: "none",
-      line: "#1CE81C", line2: "#0A7A0A", depth: 0.11, lineGlow: 5,
-      tint: false, tintGrid: true, glow: 0.45, shade: 0.5,
-      orb: 0.155, spread: 0.14, gloss: 0.2,
-      colors: ["#FF2020", "#22DD22", "#2B6BFF", "#FFDD00",
-               "#FF3BD4", "#22DDDD", "#FF8800", "#A64BFF"]
+    console: {
+      back: 1, orbPlane: 1, gridDim: 0, line: "#1B2733",
+      orb: 0.115, cluster: 0.155, rim: 1, glow: 1.9, tintCell: true,
+      colors: ["#FF4A55", "#2FD9A8", "#FFD23D", "#A98BFF",
+               "#8FE04A", "#FF5FA2", "#4D9BFF", "#FF8A3D"]
     }
   };
 
-  const STORE_NAME = "cr.name";
-  const cleanName = s => String(s == null ? "" : s).trim().slice(0, 14);
-  let myName = cleanName(store.get(STORE_NAME));
-
-  let boardStyle = store.get(STORE.style) === "console" ? "console" : "classic";
+  let boardStyle = store.get(STORE.style) === "console" ? "console" : "original";
   const theme = () => THEMES[boardStyle];
-  const colorOf = p => theme().colors[p];
+
+  /* Per-player colour overrides, as the original's preferences screen offers.
+     Display-only — the server deals in seat indices and never sees these. */
+  function loadColours() {
+    try {
+      const v = JSON.parse(store.get(STORE.colours) || "[]");
+      return Array.from({ length: E.MAX_PLAYERS }, (_, i) =>
+        typeof v[i] === "string" && /^#[0-9a-f]{6}$/i.test(v[i]) ? v[i] : null);
+    } catch (_) {
+      return new Array(E.MAX_PLAYERS).fill(null);
+    }
+  }
+  let colours = loadColours();
+  const colorOf = p => colours[p] || theme().colors[p];
+
+  const cleanName = s => String(s == null ? "" : s).trim().slice(0, 14);
+  let myName = cleanName(store.get(STORE.name));
 
   /* ── state ───────────────────────────────────────────────────────────── */
 
@@ -62,7 +91,13 @@
   let logical = null;                       // settled game state
   let display = null;                       // what the canvas is showing
   let pendingWaves = [];                    // cascade waves left to animate
-  let travelers = [], waveStart = 0, waveDur = 190, shake = 0, chainShown = 0;
+  let travelers = [], waveStart = 0, waveDur = 190, chainShown = 0;
+  // The cascade is stepped by this timer, never by the render loop.
+  // requestAnimationFrame stops entirely while the tab is hidden, so driving
+  // game state from it froze a chain mid-flight until you looked at the page
+  // again. setTimeout is throttled in the background but still fires, so a
+  // cascade now finishes whether or not anyone is watching.
+  let waveTimer = null;
   let animating = false;
   // Whose move is on screen. During a cascade `logical.cur` has already moved
   // on to the next player, but the chain belongs to whoever placed the orb.
@@ -76,6 +111,7 @@
   let localCPU = Array.from({ length: E.MAX_PLAYERS }, (_, i) => i !== 0);
   let localPlayers = 2, localSize = 1;
   let soundOn = store.get(STORE.sound) === "1";
+  let vibrateOn = store.get(STORE.vibrate) === "1";
 
   let roomPlayers = 2, roomSize = 1;
   let net = null, netState = "idle";        // idle | connecting | open | lost
@@ -89,30 +125,52 @@
 
   /* ── canvas ──────────────────────────────────────────────────────────── */
 
-  const wrap = $("wrap"), canvas = $("board"), ctx = canvas.getContext("2d");
-  let cw = 0, ch = 0, cell = 0, ox = 0, oy = 0;
+  const stage = $("stage"), box = $("boardBox"), canvas = $("board");
+  const ctx = canvas.getContext("2d");
+  let cw = 0, ch = 0, cell = 0, ox = 0, oy = 0, bcx = 0, bcy = 0;
 
-  const cols = () => display.cols, rows = () => display.rows;
-  const cx = i => ox + ((i % cols()) + 0.5) * cell;
-  const cy = i => oy + (((i / cols()) | 0) + 0.5) * cell;
+  const cols = () => display.cols;
+
+  /** Project a board-plane point onto the plane at depth scale `s`. */
+  const projX = (x, s) => bcx + (x - bcx) * s;
+  const projY = (y, s) => bcy + (y - bcy) * s;
+
+  /** Where cell `i`'s orbs sit: its centre, pushed to the mid-depth plane. */
+  const siteX = i => projX(ox + ((i % cols()) + 0.5) * cell, theme().orbPlane);
+  const siteY = i => projY(oy + (((i / cols()) | 0) + 0.5) * cell, theme().orbPlane);
 
   function resize() {
     if (!display) return;
-    const rect = wrap.getBoundingClientRect();
-    if (!rect.width) return;
+    const rect = stage.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const C = display.cols, R = display.rows;
+
+    // Square cells, as large as the stage allows. The black margin left over is
+    // exactly what the original shows on a screen that isn't its aspect.
+    const pad = 10;
+    cell = Math.min((rect.width - pad * 2) / C, (rect.height - pad * 2) / R);
+    if (!(cell > 0)) return;
+
+    // One spare pixel each side so the outermost lattice line isn't half cut.
+    cw = Math.round(cell * C) + 2;
+    ch = Math.round(cell * R) + 2;
+    ox = 1; oy = 1;
+    bcx = ox + (cell * C) / 2;
+    bcy = oy + (cell * R) / 2;
+
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    cw = rect.width; ch = rect.height;
+    box.style.width = cw + "px";
+    box.style.height = ch + "px";
+    canvas.style.width = cw + "px";
+    canvas.style.height = ch + "px";
     canvas.width = Math.round(cw * dpr);
     canvas.height = Math.round(ch * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    cell = Math.min(cw / cols(), ch / rows());
-    ox = (cw - cell * cols()) / 2;
-    oy = (ch - cell * rows()) / 2;
   }
-  new ResizeObserver(resize).observe(wrap);
+  new ResizeObserver(resize).observe(stage);
   addEventListener("resize", resize);
 
-  /* ── audio ───────────────────────────────────────────────────────────── */
+  /* ── audio / haptics ─────────────────────────────────────────────────── */
 
   let actx = null;
   function blip(freq, dur, type, vol) {
@@ -131,6 +189,11 @@
       o.connect(g).connect(actx.destination);
       o.start(t); o.stop(t + dur + 0.02);
     } catch (_) { /* audio unavailable */ }
+  }
+
+  function buzz(ms) {
+    if (!vibrateOn || !navigator.vibrate) return;
+    try { navigator.vibrate(ms); } catch (_) { /* not supported */ }
   }
 
   /* ── cascade animation ───────────────────────────────────────────────── */
@@ -163,7 +226,13 @@
     syncUI();
   }
 
+  function stopWaveTimer() {
+    clearTimeout(waveTimer);
+    waveTimer = null;
+  }
+
   function stepWave() {
+    stopWaveTimer();
     const wave = pendingWaves.shift();
     if (!wave) { finishAnimation(); return; }
 
@@ -176,14 +245,16 @@
       if (display.count[i] === 0) display.owner[i] = -1;
       for (const nb of nei[i]) travelers.push({ from: i, to: nb, owner: ow });
     }
-    shake = REDUCED ? 0 : Math.min(5, 1 + wave.length * 0.5);
     blip(180 + Math.min(wave.length, 8) * 26, 0.16, "sine", 0.11);
+    buzz(Math.min(60, 12 + wave.length * 6));
     waveStart = performance.now();
     waveDur = waveMs();
+    waveTimer = setTimeout(landWave, waveDur);
     syncUI();
   }
 
   function landWave() {
+    stopWaveTimer();
     for (const t of travelers) {
       display.count[t.to]++;
       display.owner[t.to] = t.owner;
@@ -193,6 +264,7 @@
   }
 
   function finishAnimation() {
+    stopWaveTimer();
     animating = false;
     shownPlayer = -1;
     // Snap to the settled board — guards against any drift in a long cascade.
@@ -213,9 +285,9 @@
     const s = SIZES[localSize];
     logical = E.createState(s.cols, s.rows, localPlayers);
     display = E.cloneState(logical);
+    stopWaveTimer();
     pendingWaves = []; travelers = []; animating = false; moveQueue = [];
     cursor = ((s.rows / 2) | 0) * s.cols + ((s.cols / 2) | 0);
-    wrap.style.aspectRatio = s.cols + " / " + s.rows;
     resize(); syncUI();
     announce(seatName(logical.cur) + " to place");
     maybeLocalCPU();
@@ -243,9 +315,10 @@
 
   function setNet(s) {
     netState = s;
-    const el = $("netState");
+    const el = $("barStatus");
     el.dataset.net = s;
-    $("netText").textContent =
+    el.hidden = mode !== "online";
+    $("barStatusText").textContent =
       s === "open" ? "connected" : s === "connecting" ? "connecting" : s === "lost" ? "reconnecting" : "offline";
   }
 
@@ -335,9 +408,9 @@
     logical = st;
     if (animating && !reset) return;          // let the current cascade land first
     display = E.cloneState(st);
+    stopWaveTimer();
     pendingWaves = []; travelers = []; animating = false; moveQueue = [];
     if (shapeChanged) {
-      wrap.style.aspectRatio = st.cols + " / " + st.rows;
       cursor = ((st.rows / 2) | 0) * st.cols + ((st.cols / 2) | 0);
       resize();
     }
@@ -358,35 +431,39 @@
 
   /* ── rendering ───────────────────────────────────────────────────────── */
 
-  function orbOffsets(n, cap, t) {
+  /** Scale a #rrggbb toward black by factor f (1 = unchanged). */
+  function shade(hex, f) {
+    if (f >= 1) return hex;
+    const n = parseInt(hex.slice(1), 16);
+    const c = v => Math.max(0, Math.min(255, Math.round(v * f))).toString(16).padStart(2, "0");
+    return "#" + c((n >> 16) & 255) + c((n >> 8) & 255) + c(n & 255);
+  }
+
+  /** Where each of a cell's orbs sits relative to its site. */
+  function orbOffsets(n, i, t) {
     if (n <= 0) return [];
-    const R = cell * theme().spread;
-    if (n === 1) return [[0, REDUCED ? 0 : Math.sin(t / 620) * cell * 0.012]];
-    // Spin faster the closer the cell is to going critical.
-    const tension = Math.min(1, (n - 1) / Math.max(1, cap - 1));
-    const spin = REDUCED ? 0 : (t / 1000) * (0.7 + tension * 4.2);
+    if (n === 1) return [[0, 0]];             // a lone orb is dead centre
+    const R = cell * theme().cluster;
+    // Every cell keeps its own phase, otherwise a board full of pairs rotates in
+    // lockstep and reads as one moving object. The index seeds it so a cell's
+    // orientation doesn't jump when the board repaints.
+    const a0 = (REDUCED ? 0 : t / 900) + (i % 7) * 0.8976;
     return Array.from({ length: n }, (_, k) => {
-      const a = spin + (k * 2 * Math.PI) / n;
+      const a = a0 + (k * 2 * Math.PI) / n;
       return [Math.cos(a) * R, Math.sin(a) * R];
     });
   }
 
-  /** Darken a #rrggbb toward black by factor f (1 = unchanged). */
-  function shade(hex, f) {
-    if (f >= 1) return hex;
-    const n = parseInt(hex.slice(1), 16);
-    const c = v => Math.round(v * f).toString(16).padStart(2, "0");
-    return "#" + c((n >> 16) & 255) + c((n >> 8) & 255) + c(n & 255);
-  }
-
   function drawOrb(x, y, r, color) {
     const T = theme();
-    // Highlight offset up-left, colour through the middle, darker at the rim —
-    // the rim shading is what reads as a sphere rather than a flat disc.
-    const g = ctx.createRadialGradient(x - r * 0.34, y - r * 0.38, r * 0.08, x, y, r);
-    g.addColorStop(0, "#FFFFFF");
-    g.addColorStop(T.gloss, color);
-    g.addColorStop(1, shade(color, T.shade));
+    // The stops trace the brightness measured straight across a real orb: flat
+    // through the middle, rolling off to about half at the rim. No white core —
+    // the original's orbs look lit from inside rather than polished.
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, color);
+    g.addColorStop(0.5, shade(color, 0.97));
+    g.addColorStop(0.75, shade(color, 0.84));
+    g.addColorStop(1, shade(color, T.rim));
     ctx.save();
     if (T.glow > 0) { ctx.shadowColor = color; ctx.shadowBlur = r * T.glow; }
     ctx.fillStyle = g;
@@ -396,87 +473,76 @@
     ctx.restore();
   }
 
-  /** Flat lattice, or an extruded wireframe when the theme asks for depth. */
-  function drawGrid(C, R) {
+  /** The lattice is the live player's colour — the original's only turn cue. */
+  function gridColour() {
     const T = theme();
-    const d = T.depth * cell;
+    if (T.line) return T.line;
+    const who = shownPlayer >= 0 ? shownPlayer
+              : logical && logical.over ? logical.winner
+              : logical ? logical.cur
+              : 0;
+    return shade(colorOf(who >= 0 ? who : 0), T.gridDim);
+  }
 
-    // The lattice takes the colour of whoever is on the clock — the player
-    // mid-cascade, else the player to move, else the winner once it's over.
-    let front = T.line, back = T.line2;
-    if (T.tintGrid && logical) {
-      const who = shownPlayer >= 0 ? shownPlayer
-                : logical.over ? logical.winner
-                : logical.cur;
-      if (who >= 0) {
-        front = colorOf(who);
-        back = shade(front, 0.42);
+  /**
+   * Each cell as an open box: the lattice at full size, the same lattice shrunk
+   * toward the board centre, and a strut joining every pair of vertices. One
+   * flat colour throughout — all the depth comes from the projection.
+   */
+  function drawGrid(C, R) {
+    const s = theme().back;
+    const x0 = ox, x1 = ox + C * cell, y0 = oy, y1 = oy + R * cell;
+
+    ctx.strokeStyle = gridColour();
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+
+    for (const k of s === 1 ? [1] : [1, s]) {
+      for (let c = 0; c <= C; c++) {
+        const x = projX(ox + c * cell, k);
+        ctx.moveTo(x, projY(y0, k));
+        ctx.lineTo(x, projY(y1, k));
+      }
+      for (let r = 0; r <= R; r++) {
+        const y = projY(oy + r * cell, k);
+        ctx.moveTo(projX(x0, k), y);
+        ctx.lineTo(projX(x1, k), y);
       }
     }
 
-    const plane = (dx, dy, color, w) => {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = w;
-      ctx.beginPath();
-      for (let c = 0; c <= C; c++) {
-        ctx.moveTo(ox + c * cell + dx, oy + dy);
-        ctx.lineTo(ox + c * cell + dx, oy + R * cell + dy);
-      }
-      for (let r = 0; r <= R; r++) {
-        ctx.moveTo(ox + dx, oy + r * cell + dy);
-        ctx.lineTo(ox + C * cell + dx, oy + r * cell + dy);
-      }
-      ctx.stroke();
-    };
-
-    if (d > 0) {
-      plane(d, -d, back, 1);                    // back plane, pushed up-right
-      ctx.strokeStyle = back;                   // struts joining the planes
-      ctx.lineWidth = 1;
-      ctx.beginPath();
+    if (s !== 1) {
       for (let c = 0; c <= C; c++) {
         for (let r = 0; r <= R; r++) {
           const x = ox + c * cell, y = oy + r * cell;
           ctx.moveTo(x, y);
-          ctx.lineTo(x + d, y - d);
+          ctx.lineTo(projX(x, s), projY(y, s));
         }
       }
-      ctx.stroke();
     }
-
-    ctx.save();
-    if (T.lineGlow) { ctx.shadowColor = front; ctx.shadowBlur = T.lineGlow; }
-    plane(0, 0, front, d > 0 ? 1.3 : 1);
-    ctx.restore();
+    ctx.stroke();
   }
 
+  /* Paints only — it must never advance the game, or the board stops whenever
+     the tab is hidden and requestAnimationFrame goes quiet. */
   function draw(now) {
     requestAnimationFrame(draw);
     if (!display || !cell) return;
-    if (animating && travelers.length && now - waveStart >= waveDur) landWave();
 
     const C = display.cols, R = display.rows;
-    const { cap } = E.topo(C, R);
+    const T = theme();
 
-    ctx.save();
     ctx.clearRect(0, 0, cw, ch);
-    if (shake > 0.05) {
-      ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-      shake *= 0.86;
-    }
-
     drawGrid(C, R);
 
-    const T = theme();
     const orbR = cell * T.orb;
     for (let i = 0; i < display.owner.length; i++) {
       const ow = display.owner[i];
       if (ow === -1) continue;
       const col = colorOf(ow);
-      const x = cx(i), y = cy(i);
-      const gx = ox + (i % C) * cell, gy = oy + (((i / C) | 0)) * cell;
+      const x = siteX(i), y = siteY(i);
 
-      if (T.tint) {
+      if (T.tintCell) {
+        const gx = ox + (i % C) * cell, gy = oy + (((i / C) | 0)) * cell;
         ctx.fillStyle = col + "14";
         ctx.fillRect(gx + 1, gy + 1, cell - 2, cell - 2);
         ctx.strokeStyle = col + "44";
@@ -484,18 +550,7 @@
         ctx.strokeRect(gx + 1.5, gy + 1.5, cell - 3, cell - 3);
       }
 
-      if (display.count[i] === cap[i] - 1) {          // one orb from detonating
-        ctx.save();
-        ctx.strokeStyle = col + (Math.sin(now / 260) > 0 ? "88" : "44");
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([3, 4]);
-        ctx.beginPath();
-        ctx.arc(x, y, cell * 0.34, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      for (const [dx, dy] of orbOffsets(display.count[i], cap[i], now)) {
+      for (const [dx, dy] of orbOffsets(display.count[i], i, now)) {
         drawOrb(x + dx, y + dy, orbR, col);
       }
     }
@@ -503,22 +558,10 @@
     if (travelers.length) {
       const k = Math.min(1, (now - waveStart) / waveDur);
       const ease = k * k * (3 - 2 * k);
-      const rung = new Set();
       for (const t of travelers) {
-        const col = colorOf(t.owner);
-        if (!rung.has(t.from)) {
-          rung.add(t.from);
-          ctx.save();
-          ctx.strokeStyle = col;
-          ctx.globalAlpha = (1 - k) * 0.7;
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(cx(t.from), cy(t.from), cell * (0.12 + ease * 0.6), 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.restore();
-        }
-        drawOrb(cx(t.from) + (cx(t.to) - cx(t.from)) * ease,
-                cy(t.from) + (cy(t.to) - cy(t.from)) * ease, orbR, col);
+        drawOrb(siteX(t.from) + (siteX(t.to) - siteX(t.from)) * ease,
+                siteY(t.from) + (siteY(t.to) - siteY(t.from)) * ease,
+                orbR, colorOf(t.owner));
       }
     }
 
@@ -535,7 +578,6 @@
       }
       ctx.stroke();
     }
-    ctx.restore();
   }
   requestAnimationFrame(draw);
 
@@ -589,7 +631,7 @@
 
   /* ── UI ──────────────────────────────────────────────────────────────── */
 
-  const banner = $("banner"), bannerText = $("bannerText"), live = $("live");
+  const live = $("live");
   const announce = msg => { live.textContent = msg; };
 
   function lobbyMsg(text, tone) {
@@ -599,13 +641,14 @@
     if (tone) el.dataset.tone = tone; else delete el.dataset.tone;
   }
 
-  /** Display name for a seat: whatever that player chose, else the element name. */
+  /** Display name for a seat: whatever that player chose, else the colour name. */
   function seatName(p) {
+    const fallback = PLAYERS[p] ? PLAYERS[p].name : "Player " + (p + 1);
     if (mode === "online") {
       const s = seats[p];
-      return (s && s.name) || PLAYERS[p].name;
+      return (s && s.name) || fallback;
     }
-    return p === 0 && myName ? myName : PLAYERS[p].name;
+    return p === 0 && myName ? myName : fallback;
   }
 
   function seatInfo(p) {
@@ -616,116 +659,89 @@
       : { cpu: false, connected: false, mine: false };
   }
 
+  /** One row per seat, used by both the local setup and the online lobby. */
+  function seatRow(p, st) {
+    const info = seatInfo(p);
+    const row = document.createElement("div");
+    row.className = "seat";
+    row.style.setProperty("--sc", colorOf(p));
+    row.dataset.out = st && !st.alive[p] ? "1" : "0";
+
+    const pip = document.createElement("span"); pip.className = "pip";
+    const who = document.createElement("span"); who.className = "who";
+    who.textContent = seatName(p) + (mode === "online" && info.mine ? "  (you)" : "");
+
+    let tag;
+    if (mode === "local") {
+      tag = document.createElement("button");
+      tag.type = "button";
+      tag.className = "st";
+      tag.textContent = localCPU[p] ? "CPU" : "HUMAN";
+      tag.setAttribute("aria-label", seatName(p) + ": " + (localCPU[p] ? "CPU" : "human") + ", click to swap");
+      tag.onclick = () => { localCPU[p] = !localCPU[p]; syncUI(); maybeLocalCPU(); };
+    } else if (isHost && !info.mine && !info.connected) {
+      tag = document.createElement("button");
+      tag.type = "button";
+      tag.className = "st";
+      tag.textContent = info.cpu ? "CPU" : "EMPTY";
+      tag.title = info.cpu ? "Hand back to a human" : "Fill this seat with the CPU";
+      tag.onclick = () => sendNet({ type: "cpu", seat: p, on: !info.cpu });
+    } else {
+      tag = document.createElement("span");
+      tag.className = "st";
+      tag.textContent = info.cpu ? "CPU" : info.connected ? "LIVE" : "EMPTY";
+    }
+
+    row.append(pip, who, tag);
+    return row;
+  }
+
   function syncUI() {
     if (!logical || !display) return;
     const st = logical;
-    document.documentElement.style.setProperty("--turn", colorOf(st.cur));
 
-    const orbs = E.orbTotals(display);
-    $("roster").replaceChildren(...Array.from({ length: st.numPlayers }, (_, p) => {
-      const info = seatInfo(p);
-      const chip = document.createElement("div");
-      chip.className = "chip";
-      chip.style.setProperty("--pc", colorOf(p));
-      chip.dataset.active = !st.over && p === st.cur ? "1" : "0";
-      chip.dataset.out = st.alive[p] ? "0" : "1";
+    $("localSeats").replaceChildren(
+      ...Array.from({ length: st.numPlayers }, (_, p) => seatRow(p, st)));
+    if (mode === "online" && roomCode) {
+      $("roomSeats").replaceChildren(
+        ...Array.from({ length: st.numPlayers }, (_, p) => seatRow(p, st)));
+    }
 
-      const sw = document.createElement("span"); sw.className = "swatch";
-      const nm = document.createElement("span"); nm.className = "nm";
-      nm.textContent = seatName(p);
-      if (mode === "online" && info.mine) {
-        const you = document.createElement("i");
-        you.textContent = "  ← you";
-        nm.appendChild(you);
-      }
-      const ob = document.createElement("span"); ob.className = "orbs";
-      ob.textContent = orbs[p] || 0;
-
-      let tag;
-      if (mode === "local") {
-        tag = document.createElement("button");
-        tag.type = "button";
-        tag.className = "tag";
-        tag.textContent = localCPU[p] ? "CPU" : "YOU";
-        tag.setAttribute("aria-label", seatName(p) + ": " + (localCPU[p] ? "CPU" : "human") + ", click to swap");
-        tag.onclick = () => { localCPU[p] = !localCPU[p]; syncUI(); maybeLocalCPU(); };
-      } else if (isHost && !info.mine && !info.connected) {
-        tag = document.createElement("button");
-        tag.type = "button";
-        tag.className = "tag";
-        tag.textContent = info.cpu ? "CPU" : "EMPTY";
-        tag.dataset.state = info.cpu ? "" : "gone";
-        tag.title = info.cpu ? "Hand back to a human" : "Fill this seat with the CPU";
-        tag.onclick = () => sendNet({ type: "cpu", seat: p, on: !info.cpu });
-      } else {
-        tag = document.createElement("span");
-        tag.className = "tag";
-        tag.textContent = info.cpu ? "CPU" : info.connected ? "LIVE" : "EMPTY";
-        tag.dataset.state = info.cpu ? "" : info.connected ? "live" : "gone";
-      }
-
-      chip.append(sw, nm, ob, tag);
-      return chip;
-    }));
-
-    $("statTurn").textContent = Math.max(1, st.turnCount + (st.over ? 0 : 1));
-    $("statOrbs").textContent = orbs.reduce((a, b) => a + b, 0);
-    $("statChain").textContent = st.largestChain;
-
-    // Banner + board veil
-    let veil = "";
+    // The board itself carries the turn; the veil is only for states the
+    // original never has to show — no room, no connection, or a finished game.
+    let title = "", note = "";
     if (mode === "online" && !roomCode) {
-      bannerText.textContent = "Offline preview";
-      banner.classList.remove("live");
-      veil = "Create or join a room to play";
+      title = "No room";
+      note = "Open the menu to create or join one";
     } else if (mode === "online" && netState !== "open") {
-      bannerText.textContent = netState === "lost" ? "Reconnecting" : "Connecting";
-      banner.classList.add("live");
-      veil = netState === "lost" ? "Connection lost — reconnecting" : "Connecting to room";
+      title = netState === "lost" ? "Reconnecting" : "Connecting";
+      note = "Hold on";
     } else if (mode === "online" && !started) {
       const need = seats.filter(s => !s.cpu && !s.connected).length;
-      bannerText.textContent = "Waiting for players";
-      banner.classList.add("live");
-      veil = "Room " + roomCode + " — waiting for " + need + " more player" + (need === 1 ? "" : "s");
+      title = "Room " + roomCode;
+      note = "Waiting for " + need + " more player" + (need === 1 ? "" : "s");
     } else if (st.over) {
-      bannerText.textContent = st.winner >= 0 ? seatName(st.winner) + " wins" : "Stalemate";
-      banner.classList.remove("live");
-    } else if (animating && chainShown > 1) {
-      bannerText.textContent = "Chain reaction ×" + chainShown;
-      banner.classList.add("live");
-    } else if (mode === "online") {
-      bannerText.textContent = mySeat === st.cur ? "Your move" : seatName(st.cur) + " thinking";
-      banner.classList.add("live");
-    } else {
-      bannerText.textContent = seatName(st.cur) + (localCPU[st.cur] ? " computing" : " to place");
-      banner.classList.add("live");
+      title = st.winner >= 0 ? seatName(st.winner) + " wins" : "Stalemate";
+      note = mode === "local" ? "Tap to play again" : isHost ? "Restart from the menu" : "";
     }
-    $("veil").dataset.on = veil ? "1" : "0";
-    $("veilText").textContent = veil;
+    $("veil").dataset.on = title ? "1" : "0";
+    $("veilTitle").textContent = title;
+    $("veilTitle").style.color = st.over && st.winner >= 0 ? colorOf(st.winner) : "#FFFFFF";
+    $("veilNote").textContent = note;
   }
 
   function syncLobby() {
     const on = mode === "online";
-    $("lobbyCard").hidden = !on;
-    $("localCard").hidden = on;
-    if (!on) return;
-    const joined = !!roomCode;
-    $("preJoin").hidden = joined;
-    $("inRoom").hidden = !joined;
-    $("btnRestart").hidden = !(joined && isHost);
-    if (joined) {
-      $("roomCode").textContent = roomCode;
-      $("roomLink").textContent = location.origin + "/#" + roomCode;
+    $("onlinePane").hidden = !on;
+    $("localPane").hidden = on;
+    $("barStatus").hidden = !on;
+    if (on) {
+      const joined = !!roomCode;
+      $("preJoin").hidden = joined;
+      $("inRoom").hidden = !joined;
+      $("btnRestart").hidden = !(joined && isHost);
+      if (joined) $("roomCode").textContent = roomCode;
     }
-    syncUI();
-  }
-
-  /** Push the board look onto the container the canvas sits in. */
-  function applyTheme() {
-    const T = theme();
-    wrap.style.background = T.ground;
-    wrap.style.borderColor = T.border;
-    wrap.style.boxShadow = T.inset;
     syncUI();
   }
 
@@ -748,17 +764,12 @@
     segment($("segSize"), SIZES.map(s => s.label), i => localSize === i, i => { localSize = i; syncSegments(); newLocalGame(); });
     segment($("segRoomPlayers"), COUNTS, i => roomPlayers === i + 2, i => { roomPlayers = i + 2; syncSegments(); });
     segment($("segRoomSize"), SIZES.map(s => s.label), i => roomSize === i, i => { roomSize = i; syncSegments(); });
-    segment($("segStyle"), ["Classic", "Console"], i => (i === 0) === (boardStyle === "classic"), i => {
-      boardStyle = i === 0 ? "classic" : "console";
+    segment($("segStyle"), ["Original", "Console"], i => (i === 0) === (boardStyle === "original"), i => {
+      boardStyle = i === 0 ? "original" : "console";
       store.set(STORE.style, boardStyle);
       syncSegments();
-      applyTheme();
-    });
-    segment($("segSound"), ["Off", "On"], i => soundOn === !!i, i => {
-      soundOn = !!i;
-      store.set(STORE.sound, soundOn ? "1" : "0");
-      syncSegments();
-      if (soundOn) blip(520, 0.06, "square", 0.05);
+      syncColourRows();
+      syncUI();
     });
   }
 
@@ -775,6 +786,7 @@
       leaveRoom(false);
       newLocalGame();
     }
+    setNet(netState);
     syncSegments();
     syncLobby();
   }
@@ -782,6 +794,7 @@
   function leaveRoom(reconnectable) {
     clearTimeout(retryTimer);
     clearInterval(pingTimer);
+    stopWaveTimer();
     intent = null;
     moveQueue = [];
     if (net) { net.onclose = null; net.close(); net = null; }
@@ -793,6 +806,87 @@
     setNet("idle");
   }
 
+  /* ── menu and preferences ────────────────────────────────────────────── */
+
+  const sheet = $("sheet"), scrim = $("scrim"), prefs = $("prefs");
+
+  function setMenu(open) {
+    sheet.hidden = !open;
+    scrim.hidden = !open;
+    $("btnMenu").setAttribute("aria-expanded", String(open));
+  }
+  $("btnMenu").onclick = () => setMenu(sheet.hidden);
+  scrim.onclick = () => setMenu(false);
+  addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    if (!prefs.hidden) { prefs.hidden = true; return; }
+    setMenu(false);
+  });
+
+  $("miNew").onclick = () => {
+    setMenu(false);
+    if (mode === "local") { newLocalGame(); canvas.focus(); }
+    else if (isHost) sendNet({ type: "restart" });
+    else lobbyMsg("Only the host can restart the room.", "bad");
+  };
+
+  $("miPrefs").onclick = () => { setMenu(false); prefs.hidden = false; };
+  $("miRules").onclick = () => {
+    setMenu(false);
+    prefs.hidden = false;
+    prefs.querySelector(".prefBody").scrollTop = prefs.querySelector(".prefBody").scrollHeight;
+  };
+  $("btnPrefBack").onclick = () => { prefs.hidden = true; };
+
+  /* Per-player colour pickers, mirroring the original's preferences screen. */
+  function syncColourRows() {
+    $("colourRows").replaceChildren(...Array.from({ length: E.MAX_PLAYERS }, (_, p) => {
+      const row = document.createElement("div");
+      row.className = "prefRow";
+      const txt = document.createElement("span");
+      txt.className = "txt";
+      const b = document.createElement("b");
+      b.textContent = "Player " + (p + 1);
+      const s = document.createElement("small");
+      s.textContent = colours[p] ? "Custom" : PLAYERS[p].name.toLowerCase();
+      txt.append(b, s);
+
+      const inp = document.createElement("input");
+      inp.type = "color";
+      inp.value = colorOf(p);
+      inp.setAttribute("aria-label", "Colour for player " + (p + 1));
+      inp.oninput = () => {
+        colours[p] = inp.value;
+        store.set(STORE.colours, JSON.stringify(colours));
+        s.textContent = "Custom";
+        syncUI();
+      };
+      row.append(txt, inp);
+      return row;
+    }));
+  }
+
+  $("btnResetColours").onclick = () => {
+    colours = new Array(E.MAX_PLAYERS).fill(null);
+    store.del(STORE.colours);
+    syncColourRows();
+    syncUI();
+  };
+
+  const cbSound = $("cbSound"), cbVibrate = $("cbVibrate");
+  cbSound.checked = soundOn;
+  cbVibrate.checked = vibrateOn;
+  cbSound.onchange = () => {
+    soundOn = cbSound.checked;
+    store.set(STORE.sound, soundOn ? "1" : "0");
+    if (soundOn) blip(520, 0.06, "square", 0.05);
+  };
+  cbVibrate.onchange = () => {
+    vibrateOn = cbVibrate.checked;
+    store.set(STORE.vibrate, vibrateOn ? "1" : "0");
+    if (vibrateOn) buzz(30);
+  };
+
   /* ── wiring ──────────────────────────────────────────────────────────── */
 
   const nameField = $("playerName");
@@ -802,7 +896,7 @@
     const v = cleanName(nameField.value);
     if (v === myName) return;
     myName = v;
-    store.set(STORE_NAME, myName);
+    store.set(STORE.name, myName);
     // Tell the room, and keep the reconnect intent carrying the new name.
     if (mode === "online" && roomCode) sendNet({ type: "name", name: myName });
     if (intent) intent.name = myName;
@@ -814,7 +908,10 @@
     if (e.key === "Enter") { commitName(); nameField.blur(); }
   });
 
-  $("newGame").onclick = () => { newLocalGame(); canvas.focus(); };
+  // A finished local game restarts straight from the board, no menu trip.
+  $("veil").addEventListener("click", () => {
+    if (mode === "local" && logical && logical.over) { newLocalGame(); canvas.focus(); }
+  });
 
   $("btnCreate").onclick = () => {
     lobbyMsg("");
@@ -855,9 +952,20 @@
     }
   });
 
+  /* Read-only peek at the animation state. Everything in here is closed over by
+     the IIFE, which made a stalled cascade impossible to diagnose from the
+     console — this is what finally pinned one down. Cheap; keep it. */
+  window.__crDebug = () => ({
+    animating, shownPlayer, travelers: travelers.length,
+    pendingWaves: pendingWaves.length, moveQueue: moveQueue.length,
+    cur: logical && logical.cur, over: logical && logical.over,
+    cpu: localCPU.slice(0, logical ? logical.numPlayers : 0),
+    waveStart, waveDur, now: performance.now(), cell
+  });
+
   syncSegments();
+  syncColourRows();
   newLocalGame();
-  applyTheme();
   syncLobby();
 
   if ((location.hash || "").replace("#", "").trim().length === 4) setMode("online");

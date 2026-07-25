@@ -1,7 +1,11 @@
 # Chain Reaction — online
 
 Real-time multiplayer Chain Reaction. Orbs detonate at critical mass and cascade
-across the grid; last reactor standing wins.
+across the grid; last player standing wins.
+
+It is built to look like the Android original (App Holdings, package
+`com.BuddyMattEnt.ChainReaction`) rather than to reinterpret it — see
+[Matching the original](#matching-the-original).
 
 The server is authoritative — it owns every board, validates each move against
 the shared rules engine, and broadcasts the result. Clients only animate what
@@ -27,15 +31,20 @@ tab (an ordinary window and a private window works best — they get separate
 
 ## Playing
 
-2 to 8 players, on grids from 5×7 up to 12×16.
+2 to 8 players, on grids from 5×7 up to 12×16. The original's standard board is
+6×9, which is the default here too.
 
-Set **Your name** in the panel and it shows up on your seat for everyone in the
-room; leave it blank and you get the element name for that seat. The **Board**
-toggle switches between the classic arcade look (black, green wireframe) and the
-instrument-console one. Both are remembered per browser.
+Everything lives behind the **⋮** menu in the action bar, the way the original
+keeps it — the board itself gets the whole screen, and the only thing that tells
+you whose turn it is is the colour of the lattice.
 
-**Local** — everything runs in the tab. Toggle any seat between `YOU` and `CPU`;
-set them all to CPU and it plays itself.
+**Preferences** (⋮ → Preferences) holds your name, sound, vibrate, the board
+style, and a colour picker per player, mirroring the original's own preferences
+screen. Colours are display-only; the server deals in seat indices, so changing
+one only affects your browser.
+
+**Local** — everything runs in the tab. Toggle any seat between `HUMAN` and
+`CPU`; set them all to CPU and it plays itself.
 
 **Online** — *Create room* gives you a 4-letter code and a shareable link.
 Anyone who opens the link drops straight into the room. Play starts once every
@@ -45,9 +54,34 @@ seat is filled.
   automatically via a token in `localStorage`.
 - If someone doesn't show up or leaves for good, the host can click their
   `EMPTY` tag to hand the seat to the CPU and keep the game moving.
-- Only the host can restart the run.
+- Only the host can restart the game.
 - Rooms are in memory only. They vanish on restart, and 45 minutes after the
   last player disconnects.
+
+## Matching the original
+
+The board is not styled by eye. Every number below was measured off the
+original's own store screenshots (480×800 images, 77.2px cells) and lives in
+`THEMES.original` in `public/app.js`:
+
+| | Measured | Where it shows |
+|---|---|---|
+| Back lattice scale | `0.926` about the board centre | each cell is an open box, fanning out from the middle |
+| Orb plane | `0.963` | orbs sit half way into that box, so they drift off the flat cell centre |
+| Grid colour | player colour × `0.51` | `rgb(132,0,0)` on a red turn, `rgb(0,130,0)` on green |
+| Orb radius | `0.233` × cell | |
+| Cluster radius | `0.095` × cell | 2 and 3 orbs overlap heavily and rotate |
+| Rim | `0.45` × colour | no specular highlight — the orbs read as lit from inside |
+| Palette | `#FF0000 #00FF00 #0000FF #FFFF00 #FF00FF #00FFFF #FF8000 #FFFFFF` | |
+
+The clone's own render measures back as `rgb(130,0,0)` and a `0.233` radius
+ratio, so those two are confirmed rather than merely intended.
+
+**Deliberate differences.** The original has an UNDO button; this doesn't. The
+original has no network, so the room lobby, seat list and connection indicator
+have no counterpart there and live in the menu. `Console` under Preferences →
+Board is this project's own earlier look, kept as an option; it runs through the
+same renderer with the depth flattened to zero.
 
 ## Deploying
 

@@ -3,339 +3,320 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0A0F14">
-<title>Chain Reaction — Critical Mass</title>
+<meta name="theme-color" content="#1F1F1F">
+<title>Chain Reaction</title>
 <style>
+  /* The original is an Android Holo-dark app: a slim charcoal action bar over a
+     black board that takes everything else. Its accent is Holo blue, which is
+     the only non-player colour in the whole interface. */
   :root{
     color-scheme: dark;
-    --ink:     #0A0F14;
-    --panel:   #101922;
-    --panel-2: #16212C;
-    --rule:    #1B2733;
-    --text:    #BFD0DC;
-    --muted:   #63798B;
-    --good:    #2FD9A8;
-    --warn:    #FFC23D;
-    --bad:     #FF4A55;
-    --turn:    #FF4A55;
-    --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
-    --sans: ui-sans-serif, system-ui, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --bar:    #1F1F1F;
+    --sheet:  #2B2B2B;
+    --line:   #3A3A3A;
+    --accent: #33B5E5;
+    --text:   #FFFFFF;
+    --muted:  #9A9A9A;
+    --bad:    #FF5252;
+    --sans: Roboto, "Segoe UI", ui-sans-serif, system-ui, "Helvetica Neue", Arial, sans-serif;
   }
   *{ box-sizing:border-box; }
-  html,body{ margin:0; }
+  html,body{ margin:0; height:100%; overflow:hidden; }
   body{
-    min-height:100vh;
-    background: radial-gradient(120% 90% at 50% -10%, #14202B 0%, var(--ink) 62%) fixed;
-    color:var(--text);
-    font-family:var(--sans);
-    font-size:15px;
-    line-height:1.55;
-    -webkit-font-smoothing:antialiased;
+    background:#000; color:var(--text); font-family:var(--sans); font-size:15px;
+    -webkit-font-smoothing:antialiased; -webkit-tap-highlight-color:transparent;
   }
+  #app{ height:100%; display:flex; flex-direction:column; }
 
-  .shell{ max-width:1180px; margin:0 auto; padding:24px 20px 56px; display:flex; flex-direction:column; gap:20px; }
+  /* ── action bar ─────────────────────────────────────────────────────── */
 
-  header{
-    display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between;
-    gap:16px 24px; border-bottom:1px solid var(--rule); padding-bottom:16px;
+  .bar{
+    flex:none; display:flex; align-items:center; gap:12px;
+    height:52px; padding:0 6px 0 12px;
+    background:var(--bar); border-bottom:2px solid var(--accent);
+    padding-top:env(safe-area-inset-top);
+    height:calc(52px + env(safe-area-inset-top));
   }
-  .plate h1{
-    margin:0; font-family:var(--mono); font-size:clamp(18px,3.4vw,27px); font-weight:600;
-    letter-spacing:.34em; text-indent:.34em; color:#E6F0F7;
+  .mark{ flex:none; display:block; width:22px; height:22px; }
+  .bar h1{
+    flex:1; min-width:0; margin:0; font-size:19px; font-weight:500; letter-spacing:.2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
-  .plate p{
-    margin:5px 0 0; font-family:var(--mono); font-size:11px; letter-spacing:.22em;
-    text-transform:uppercase; color:var(--muted);
+  .barStatus{
+    flex:none; display:flex; align-items:center; gap:7px;
+    font-size:12px; color:var(--muted); white-space:nowrap;
   }
-  .banner{
-    display:flex; align-items:center; gap:10px;
-    font-family:var(--mono); font-size:12px; letter-spacing:.16em; text-transform:uppercase;
-    padding:9px 14px; background:var(--panel);
-    border:1px solid var(--rule); border-left:3px solid var(--turn);
-    color:#DCE8F0; min-height:20px;
-  }
-  .pip{ width:9px; height:9px; border-radius:50%; background:var(--turn); box-shadow:0 0 10px var(--turn); flex:none; }
-  .banner.live .pip{ animation:breathe 1.4s ease-in-out infinite; }
-  @keyframes breathe{ 50%{ opacity:.28; transform:scale(.72); } }
+  .barStatus .dot{ width:8px; height:8px; border-radius:50%; background:var(--muted); }
+  .barStatus[data-net="open"] .dot{ background:#66BB6A; }
+  .barStatus[data-net="lost"] .dot{ background:var(--bad); }
+  .barStatus[data-net="connecting"] .dot{ background:var(--accent); animation:pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse{ 50%{ opacity:.25; } }
 
-  main{ display:grid; grid-template-columns:minmax(0,1fr) 312px; gap:22px; align-items:start; }
-  @media (max-width:880px){ main{ grid-template-columns:minmax(0,1fr); } }
-
-  .board-wrap{
-    position:relative; width:100%; max-height:min(74vh,780px); margin-inline:auto;
-    background:linear-gradient(180deg,#0D141B,#0A1016);
-    border:1px solid var(--rule);
-    box-shadow:inset 0 0 70px rgba(0,0,0,.65);
+  .iconBtn{
+    flex:none; width:44px; height:44px; display:grid; place-items:center;
+    background:none; border:0; color:var(--text); font-size:20px; line-height:1; cursor:pointer;
+    border-radius:50%;
   }
-  .board-wrap canvas{ display:block; width:100%; height:100%; touch-action:manipulation; }
-  .board-wrap:focus-within{ border-color:color-mix(in srgb,var(--turn) 55%,var(--rule)); }
-  canvas:focus{ outline:none; }
-  canvas:focus-visible{ outline:2px solid var(--turn); outline-offset:-2px; }
+  .iconBtn:hover{ background:rgba(255,255,255,.09); }
+  .iconBtn:focus-visible{ outline:2px solid var(--accent); outline-offset:-3px; }
+
+  /* ── board ──────────────────────────────────────────────────────────── */
+
+  .stage{ flex:1; min-height:0; position:relative; background:#000; display:grid; place-items:center; }
+  /* The canvas is sized to the grid's aspect so cells stay square; the black
+     letterbox either side is what the original shows on a non-phone screen. */
+  #boardBox{ position:relative; }
+  #board{ display:block; touch-action:manipulation; }
+  #board:focus{ outline:none; }
+  #board:focus-visible{ outline:1px solid var(--accent); outline-offset:4px; }
+
   .veil{
     position:absolute; inset:0; display:none; place-items:center; text-align:center;
-    background:rgba(8,13,18,.82); backdrop-filter:blur(2px);
-    font-family:var(--mono); font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--muted);
-    padding:24px;
+    background:rgba(0,0,0,.74); padding:24px; cursor:default;
   }
   .veil[data-on="1"]{ display:grid; }
+  .veil b{ display:block; font-size:clamp(20px,5vw,30px); font-weight:500; letter-spacing:.5px; }
+  .veil span{ display:block; margin-top:10px; font-size:13px; color:var(--muted); }
 
-  .console{ display:flex; flex-direction:column; gap:14px; }
-  .card{ background:var(--panel); border:1px solid var(--rule); }
-  .card > h2{
-    margin:0; padding:9px 13px;
-    font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.24em;
-    text-transform:uppercase; color:var(--muted);
-    border-bottom:1px solid var(--rule); background:var(--panel-2);
-    display:flex; justify-content:space-between; align-items:center; gap:8px;
+  /* ── overflow menu ──────────────────────────────────────────────────── */
+
+  .scrim{ position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:8; }
+  .sheet{
+    position:absolute; z-index:9; top:calc(56px + env(safe-area-inset-top)); right:8px;
+    width:min(310px, calc(100vw - 16px)); max-height:calc(100vh - 80px); overflow-y:auto;
+    background:var(--sheet); border:1px solid #1A1A1A;
+    box-shadow:0 6px 22px rgba(0,0,0,.6); padding:6px 0;
   }
-  .card-body{ padding:11px 13px; display:flex; flex-direction:column; gap:9px; }
-
-  .chip{
-    display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:10px;
-    padding:8px 10px; border:1px solid var(--rule); background:#0C141C;
-    font-family:var(--mono); font-size:12px; letter-spacing:.08em;
-    transition:border-color .18s, background .18s;
+  .item{
+    display:block; width:100%; text-align:left; background:none; border:0;
+    color:var(--text); font:inherit; padding:12px 16px; cursor:pointer;
   }
-  .chip[data-active="1"]{ border-color:var(--pc); background:color-mix(in srgb,var(--pc) 9%,#0C141C); }
-  .chip[data-out="1"]{ opacity:.34; }
-  .chip[data-out="1"] .nm{ text-decoration:line-through; }
-  .chip[data-out="1"] .swatch{ box-shadow:none; }
-  .swatch{ width:11px; height:11px; background:var(--pc); box-shadow:0 0 9px var(--pc); }
-  .nm{ color:#D6E4EE; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .nm i{ font-style:normal; color:var(--muted); font-size:10px; letter-spacing:.14em; }
-  .orbs{ font-variant-numeric:tabular-nums; color:var(--pc); }
-  .tag{
-    font-family:var(--mono); font-size:9px; letter-spacing:.14em; padding:3px 6px;
-    border:1px solid var(--rule); color:var(--muted); background:transparent; white-space:nowrap;
-  }
-  button.tag{ cursor:pointer; }
-  button.tag:hover{ color:var(--text); border-color:var(--muted); }
-  .tag[data-state="live"]{ color:var(--good); border-color:color-mix(in srgb,var(--good) 40%,var(--rule)); }
-  .tag[data-state="gone"]{ color:var(--warn); border-color:color-mix(in srgb,var(--warn) 40%,var(--rule)); }
+  .item:hover{ background:rgba(255,255,255,.07); }
+  .item:focus-visible{ outline:2px solid var(--accent); outline-offset:-2px; }
+  .item small{ display:block; margin-top:2px; font-size:12px; color:var(--muted); }
+  .sep{ height:1px; margin:6px 0; background:var(--line); border:0; }
+  .grp{ padding:9px 16px 11px; }
+  .grp > .lbl{ display:block; font-size:12px; color:var(--muted); margin-bottom:7px; }
 
-  .readout{ display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--rule); border:1px solid var(--rule); }
-  .stat{ background:#0C141C; padding:9px 10px; }
-  .stat b{ display:block; font-family:var(--mono); font-size:19px; font-weight:600; font-variant-numeric:tabular-nums; color:#E6F0F7; line-height:1.15; }
-  .stat span{ display:block; margin-top:2px; font-family:var(--mono); font-size:9px; letter-spacing:.15em; text-transform:uppercase; color:var(--muted); }
-
-  .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  /* Options that outgrow one line: label above, buttons wrapping beneath. */
-  .row.stack{ flex-direction:column; align-items:stretch; gap:7px; }
-  .row.stack .seg{ flex-wrap:wrap; }
-  .row.stack .seg button{ flex:1 1 40px; text-align:center; }
-  .row > label, .lbl{ font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); }
-  .seg{ display:flex; border:1px solid var(--rule); }
+  .seg{ display:flex; flex-wrap:wrap; gap:4px; }
   .seg button{
-    font-family:var(--mono); font-size:11px; letter-spacing:.06em; padding:5px 9px; cursor:pointer;
-    background:transparent; color:var(--muted); border:0; border-left:1px solid var(--rule);
+    flex:1 1 34px; min-width:34px; padding:6px 8px; cursor:pointer;
+    background:#1A1A1A; color:var(--muted); border:1px solid var(--line); font:inherit; font-size:13px;
   }
-  .seg button:first-child{ border-left:0; }
   .seg button:hover{ color:var(--text); }
-  .seg button[aria-pressed="true"]{ background:var(--turn); color:#080D12; font-weight:600; }
-  .seg button:focus-visible{ outline:2px solid var(--turn); outline-offset:-2px; }
+  .seg button[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:#06232F; font-weight:500; }
+  .seg button:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
 
   .btn{
-    width:100%; font-family:var(--mono); font-size:12px; font-weight:600;
-    letter-spacing:.2em; text-transform:uppercase; padding:11px; cursor:pointer;
-    background:var(--turn); color:#080D12; border:0;
+    width:100%; padding:10px; cursor:pointer; font:inherit; font-size:14px;
+    background:var(--accent); color:#06232F; border:0; font-weight:500;
   }
-  .btn:hover{ filter:brightness(1.12); }
-  .btn:disabled{ opacity:.35; cursor:not-allowed; filter:none; }
-  .btn.ghost{ background:transparent; color:var(--muted); border:1px solid var(--rule); }
-  .btn.ghost:hover{ color:var(--text); border-color:var(--muted); filter:none; }
-  .btn:focus-visible{ outline:2px solid #E6F0F7; outline-offset:2px; }
+  .btn:hover{ filter:brightness(1.1); }
+  .btn:disabled{ opacity:.4; cursor:not-allowed; filter:none; }
+  .btn.ghost{ background:#1A1A1A; color:var(--text); border:1px solid var(--line); }
+  .btn.ghost:hover{ background:#242424; filter:none; }
+  .btn:focus-visible{ outline:2px solid var(--text); outline-offset:2px; }
 
-  .code-field{ display:flex; gap:8px; }
-  .code-field input{
-    flex:1; min-width:0; font-family:var(--mono); font-size:15px; letter-spacing:.32em;
-    text-transform:uppercase; text-align:center;
-    padding:9px 10px; background:#0C141C; color:#E6F0F7; border:1px solid var(--rule);
+  .field{
+    width:100%; padding:9px 10px; font:inherit; font-size:14px;
+    background:#1A1A1A; color:var(--text); border:1px solid var(--line);
   }
-  .code-field input::placeholder{ color:#3B4B59; letter-spacing:.2em; }
-  .code-field input:focus-visible{ outline:2px solid var(--turn); outline-offset:-1px; }
+  .field::placeholder{ color:#5E5E5E; }
+  .field:focus-visible{ outline:2px solid var(--accent); outline-offset:-1px; }
+  .codeField{ display:flex; gap:6px; }
+  .codeField .field{ text-align:center; letter-spacing:.3em; text-transform:uppercase; }
+  .codeField .btn{ width:auto; padding:9px 15px; }
 
-  .nameField{
-    width:100%; font-family:var(--mono); font-size:13px; letter-spacing:.08em;
-    padding:8px 10px; background:#0C141C; color:#E6F0F7; border:1px solid var(--rule);
-  }
-  .nameField::placeholder{ color:#3B4B59; }
-  .nameField:focus-visible{ outline:2px solid var(--turn); outline-offset:-1px; }
+  .roomLine{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .roomLine b{ font-size:24px; font-weight:500; letter-spacing:.22em; }
+  .msg{ margin:8px 0 0; font-size:12px; color:var(--muted); }
+  .msg[data-tone="bad"]{ color:var(--bad); }
 
-  .roomcode{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:10px 12px; background:#0C141C; border:1px solid var(--rule);
-  }
-  .roomcode b{
-    font-family:var(--mono); font-size:26px; font-weight:600; letter-spacing:.28em;
-    text-indent:.28em; color:#E6F0F7; line-height:1;
+  /* Seat list — online only. The original has no roster because it has no
+     network; you still need to see who is actually in the room. */
+  .seats{ display:flex; flex-direction:column; gap:5px; }
+  .seat{ display:flex; align-items:center; gap:9px; font-size:13px; }
+  .seat .pip{ width:11px; height:11px; border-radius:50%; background:var(--sc); flex:none; }
+  .seat .who{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .seat[data-out="1"]{ opacity:.4; }
+  .seat[data-out="1"] .who{ text-decoration:line-through; }
+  .seat .st{ font-size:11px; color:var(--muted); }
+  .seat button.st{ background:#1A1A1A; border:1px solid var(--line); color:var(--muted); padding:2px 7px; cursor:pointer; font:inherit; font-size:11px; }
+  .seat button.st:hover{ color:var(--text); }
+
+  /* ── preferences screen ─────────────────────────────────────────────── */
+
+  .prefs{ position:fixed; inset:0; z-index:12; background:#141414; display:flex; flex-direction:column; }
+  .prefs .bar h1{ font-size:17px; }
+  .prefBody{ flex:1; overflow-y:auto; padding:4px 0 40px; }
+  /* The original is a phone app; on a wide screen the rows would otherwise
+     stretch until label and control lose sight of each other. */
+  .prefSection{ max-width:720px; margin-inline:auto; padding:14px 18px; border-bottom:1px solid #242424; }
+  .prefSection > h2{ margin:0 0 10px; font-size:13px; font-weight:500; color:var(--accent); letter-spacing:.3px; }
+  .prefRow{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding:7px 0; }
+  .prefRow .txt{ min-width:0; }
+  .prefRow .txt b{ display:block; font-size:14px; font-weight:400; }
+  .prefRow .txt small{ display:block; font-size:12px; color:var(--muted); margin-top:1px; }
+  .prefRow input[type="color"]{
+    flex:none; width:46px; height:28px; padding:0; cursor:pointer;
+    background:#1A1A1A; border:1px solid var(--line);
   }
 
-  .link{
-    font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted);
-    background:#0C141C; border:1px solid var(--rule); padding:7px 9px;
-    overflow-x:auto; white-space:nowrap;
+  /* Checkbox styled as the original's right-aligned Holo tick box. */
+  .box{
+    flex:none; width:22px; height:22px; cursor:pointer; appearance:none;
+    background:#1A1A1A; border:2px solid #6A6A6A; border-radius:2px; position:relative;
   }
-
-  details.card summary{
-    padding:9px 13px; font-family:var(--mono); font-size:10px; font-weight:600;
-    letter-spacing:.24em; text-transform:uppercase; color:var(--muted); cursor:pointer;
-    list-style:none; background:var(--panel-2);
-    display:flex; justify-content:space-between; align-items:center;
+  .box:checked{ background:var(--accent); border-color:var(--accent); }
+  .box:checked::after{
+    content:""; position:absolute; left:6px; top:1px; width:5px; height:11px;
+    border:solid #06232F; border-width:0 2.5px 2.5px 0; transform:rotate(42deg);
   }
-  details.card summary::-webkit-details-marker{ display:none; }
-  details.card summary::after{ content:"+"; font-size:13px; }
-  details.card[open] summary{ border-bottom:1px solid var(--rule); }
-  details.card[open] summary::after{ content:"–"; }
-  details.card summary:focus-visible{ outline:2px solid var(--turn); outline-offset:-2px; }
-  .rules{ padding:12px 14px; font-size:13.5px; color:#A9BDCB; }
-  .rules p{ margin:0 0 10px; }
-  .rules p:last-child{ margin-bottom:0; }
-  .rules b{ color:#DCE8F0; font-weight:600; }
-  .rules code{ font-family:var(--mono); font-size:12px; color:var(--turn); background:#0C141C; padding:1px 4px; border:1px solid var(--rule); }
+  .box:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
 
-  .hint{ font-family:var(--mono); font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); text-align:center; margin:0; }
-  .hint[data-tone="bad"]{ color:var(--bad); }
-  .net{ display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:9px; letter-spacing:.14em; }
-  .net .dot{ width:7px; height:7px; border-radius:50%; background:var(--muted); }
-  .net[data-net="open"] .dot{ background:var(--good); box-shadow:0 0 8px var(--good); }
-  .net[data-net="open"]{ color:var(--good); }
-  .net[data-net="lost"] .dot{ background:var(--bad); }
-  .net[data-net="lost"]{ color:var(--bad); }
   .sr{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
   [hidden]{ display:none !important; }
-
-  @media (prefers-reduced-motion: reduce){
-    *{ animation-duration:.001ms !important; transition-duration:.001ms !important; }
-  }
+  @media (prefers-reduced-motion: reduce){ *{ animation-duration:.001ms !important; } }
 </style>
 </head>
 <body>
-<div class="shell">
-  <header>
-    <div class="plate">
-      <h1>CHAIN REACTION</h1>
-      <p>Critical mass · cascade capture</p>
-    </div>
-    <div class="banner live" id="banner"><span class="pip"></span><span id="bannerText">Strontium to place</span></div>
-  </header>
+<div id="app">
+  <div class="bar">
+    <!-- The app's own mark: the three orbs from the original's icon. -->
+    <svg class="mark" viewBox="0 0 22 22" aria-hidden="true">
+      <circle cx="6"  cy="7"  r="4.4" fill="#FF0000"/>
+      <circle cx="15" cy="6"  r="3.6" fill="#0000FF"/>
+      <circle cx="11" cy="15" r="5.2" fill="#00FF00"/>
+    </svg>
+    <h1>Chain Reaction</h1>
+    <span class="barStatus" id="barStatus" data-net="idle" hidden><span class="dot"></span><span id="barStatusText"></span></span>
+    <button class="iconBtn" id="btnMenu" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Menu">&#8942;</button>
+  </div>
 
-  <main>
-    <div class="board-wrap" id="wrap">
+  <div class="stage" id="stage">
+    <div id="boardBox">
       <canvas id="board" role="application" tabindex="0"
               aria-label="Chain Reaction board. Arrow keys move the cursor, Enter places an orb."></canvas>
-      <div class="veil" id="veil"><span id="veilText"></span></div>
     </div>
-
-    <div class="console">
-      <section class="card">
-        <h2>Mode</h2>
-        <div class="card-body">
-          <div class="row">
-            <label id="lblMode">Play</label>
-            <div class="seg" id="segMode" role="group" aria-labelledby="lblMode"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- online: lobby -->
-      <section class="card" id="lobbyCard" hidden>
-        <h2>Room <span class="net" id="netState" data-net="idle"><span class="dot"></span><span id="netText">offline</span></span></h2>
-        <div class="card-body" id="lobbyBody">
-          <div id="preJoin">
-            <div class="row stack">
-              <label id="lblRP">Reactors</label>
-              <div class="seg" id="segRoomPlayers" role="group" aria-labelledby="lblRP"></div>
-            </div>
-            <div class="row stack" style="margin-top:9px">
-              <label id="lblRS">Grid</label>
-              <div class="seg" id="segRoomSize" role="group" aria-labelledby="lblRS"></div>
-            </div>
-            <button class="btn" id="btnCreate" style="margin-top:11px">Create room</button>
-            <p class="hint" style="margin:11px 0 8px">or join one</p>
-            <div class="code-field">
-              <input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off"
-                     autocapitalize="characters" spellcheck="false" aria-label="Room code">
-              <button class="btn ghost" id="btnJoin" style="width:auto; padding:9px 14px">Join</button>
-            </div>
-          </div>
-
-          <div id="inRoom" hidden>
-            <div class="roomcode">
-              <b id="roomCode">····</b>
-              <button class="tag" id="btnCopy" type="button">Copy link</button>
-            </div>
-            <p class="link" id="roomLink"></p>
-            <button class="btn ghost" id="btnRestart" style="margin-top:9px" hidden>Restart run</button>
-            <button class="btn ghost" id="btnLeave" style="margin-top:9px">Leave room</button>
-          </div>
-
-          <p class="hint" id="lobbyMsg" hidden></p>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Reactors</h2>
-        <div class="card-body" id="roster"></div>
-      </section>
-
-      <section class="card">
-        <h2>Readout</h2>
-        <div class="readout">
-          <div class="stat"><b id="statTurn">1</b><span>Turn</span></div>
-          <div class="stat"><b id="statOrbs">0</b><span>Orbs</span></div>
-          <div class="stat"><b id="statChain">0</b><span>Best chain</span></div>
-        </div>
-      </section>
-
-      <!-- local: setup -->
-      <section class="card" id="localCard">
-        <h2>Setup</h2>
-        <div class="card-body">
-          <div class="row stack">
-            <label id="lblPlayers">Reactors</label>
-            <div class="seg" id="segPlayers" role="group" aria-labelledby="lblPlayers"></div>
-          </div>
-          <div class="row stack">
-            <label id="lblSize">Grid</label>
-            <div class="seg" id="segSize" role="group" aria-labelledby="lblSize"></div>
-          </div>
-          <button class="btn" id="newGame">New run</button>
-          <p class="hint">Tap a reactor's tag to swap human / CPU</p>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="card-body">
-          <div class="row stack">
-            <label for="playerName">Your name</label>
-            <input id="playerName" class="nameField" maxlength="14" autocomplete="nickname"
-                   spellcheck="false" placeholder="Strontium">
-          </div>
-          <div class="row">
-            <label id="lblStyle">Board</label>
-            <div class="seg" id="segStyle" role="group" aria-labelledby="lblStyle"></div>
-          </div>
-          <div class="row">
-            <label id="lblSound">Audio</label>
-            <div class="seg" id="segSound" role="group" aria-labelledby="lblSound"></div>
-          </div>
-        </div>
-      </section>
-
-      <details class="card">
-        <summary>Rules</summary>
-        <div class="rules">
-          <p>Place one orb per turn into an <b>empty cell</b> or a cell <b>you already own</b>. Never into an opponent's.</p>
-          <p>A cell's <b>critical mass</b> is its number of orthogonal neighbours — <code>2</code> in a corner, <code>3</code> on an edge, <code>4</code> inside. Reach it and the cell detonates, sending one orb to each neighbour.</p>
-          <p>Every cell that receives an orb <b>flips to your colour</b>, orbs and all. If it hits its own critical mass it detonates too, and the chain runs until the board settles.</p>
-          <p>Once everyone has had a turn, any reactor left with <b>zero orbs is out</b>. Last one standing wins.</p>
-        </div>
-      </details>
-    </div>
-  </main>
-
-  <p class="sr" id="live" aria-live="polite"></p>
+    <div class="veil" id="veil"><div><b id="veilTitle"></b><span id="veilNote"></span></div></div>
+  </div>
 </div>
+
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" hidden role="menu" aria-label="Menu">
+  <button class="item" id="miNew" role="menuitem">New game</button>
+  <hr class="sep">
+
+  <div class="grp">
+    <span class="lbl" id="lblMode">Play</span>
+    <div class="seg" id="segMode" role="group" aria-labelledby="lblMode"></div>
+  </div>
+
+  <!-- local setup -->
+  <div id="localPane">
+    <div class="grp">
+      <span class="lbl" id="lblPlayers">Players</span>
+      <div class="seg" id="segPlayers" role="group" aria-labelledby="lblPlayers"></div>
+    </div>
+    <div class="grp">
+      <span class="lbl" id="lblSize">Board</span>
+      <div class="seg" id="segSize" role="group" aria-labelledby="lblSize"></div>
+    </div>
+    <div class="grp">
+      <span class="lbl" id="lblSeats">Seats</span>
+      <div class="seats" id="localSeats"></div>
+    </div>
+  </div>
+
+  <!-- online lobby -->
+  <div id="onlinePane" hidden>
+    <div id="preJoin">
+      <div class="grp">
+        <span class="lbl" id="lblRP">Players</span>
+        <div class="seg" id="segRoomPlayers" role="group" aria-labelledby="lblRP"></div>
+      </div>
+      <div class="grp">
+        <span class="lbl" id="lblRS">Board</span>
+        <div class="seg" id="segRoomSize" role="group" aria-labelledby="lblRS"></div>
+      </div>
+      <div class="grp">
+        <button class="btn" id="btnCreate" type="button">Create room</button>
+        <p class="msg" style="text-align:center">or join one</p>
+        <div class="codeField" style="margin-top:8px">
+          <input id="joinCode" class="field" maxlength="4" placeholder="CODE" autocomplete="off"
+                 autocapitalize="characters" spellcheck="false" aria-label="Room code">
+          <button class="btn ghost" id="btnJoin" type="button">Join</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="inRoom" hidden>
+      <div class="grp">
+        <div class="roomLine">
+          <b id="roomCode">····</b>
+          <button class="btn ghost" id="btnCopy" type="button" style="width:auto; padding:7px 12px; font-size:13px">Copy link</button>
+        </div>
+        <div class="seats" id="roomSeats"></div>
+        <button class="btn ghost" id="btnRestart" type="button" style="margin-top:10px" hidden>Restart game</button>
+        <button class="btn ghost" id="btnLeave" type="button" style="margin-top:6px">Leave room</button>
+      </div>
+    </div>
+    <p class="msg" id="lobbyMsg" style="padding:0 16px" hidden></p>
+  </div>
+
+  <hr class="sep">
+  <button class="item" id="miPrefs" role="menuitem">Preferences</button>
+  <button class="item" id="miRules" role="menuitem">How to play</button>
+</div>
+
+<!-- The original keeps settings on their own screen; so does this. -->
+<div class="prefs" id="prefs" hidden>
+  <div class="bar">
+    <button class="iconBtn" id="btnPrefBack" type="button" aria-label="Back">&#8592;</button>
+    <h1>Chain Reaction Preferences</h1>
+  </div>
+  <div class="prefBody">
+    <div class="prefSection">
+      <h2>Game</h2>
+      <div class="prefRow">
+        <span class="txt"><b>Your name</b><small>Shown to others in an online room</small></span>
+      </div>
+      <input id="playerName" class="field" maxlength="14" autocomplete="nickname" spellcheck="false" placeholder="Red">
+      <div class="prefRow">
+        <span class="txt"><b>Sound effects</b><small>Placement and explosion tones</small></span>
+        <input class="box" type="checkbox" id="cbSound">
+      </div>
+      <div class="prefRow">
+        <span class="txt"><b>Vibrate</b><small>Buzz on each explosion, where supported</small></span>
+        <input class="box" type="checkbox" id="cbVibrate">
+      </div>
+    </div>
+
+    <div class="prefSection">
+      <h2>Board</h2>
+      <div class="prefRow">
+        <span class="txt"><b>Style</b><small>Original is the wireframe board this game copies</small></span>
+      </div>
+      <div class="seg" id="segStyle" role="group" aria-label="Board style"></div>
+    </div>
+
+    <div class="prefSection">
+      <h2>Player colours</h2>
+      <div id="colourRows"></div>
+      <button class="btn ghost" id="btnResetColours" type="button" style="margin-top:12px">Reset to defaults</button>
+    </div>
+
+    <div class="prefSection">
+      <h2>How to play</h2>
+      <p style="margin:0 0 10px; font-size:13.5px; color:#C4C4C4">Place one orb per turn into an empty cell or a cell you already own — never into an opponent's.</p>
+      <p style="margin:0 0 10px; font-size:13.5px; color:#C4C4C4">A cell's critical mass is its number of orthogonal neighbours: 2 in a corner, 3 on an edge, 4 inside. Reach it and the cell explodes, sending one orb into each neighbour.</p>
+      <p style="margin:0 0 10px; font-size:13.5px; color:#C4C4C4">Every cell that receives an orb turns your colour, orbs and all. If that tips it to its own critical mass it explodes too, and the chain runs until the board settles.</p>
+      <p style="margin:0; font-size:13.5px; color:#C4C4C4">Once everyone has had a turn, any player left with no orbs is out. Last one standing wins.</p>
+    </div>
+  </div>
+</div>
+
+<p class="sr" id="live" aria-live="polite"></p>
 
 <script src="engine.js"></script>
 <script src="app.js"></script>

@@ -11,17 +11,19 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  /* Flame-emission colours, spread around the hue wheel so eight stay
-     distinguishable on a crowded board. */
+  /* The original game's eight orb colours, in its seat order — sampled straight
+     off its screenshots, which is why they are flat channel extremes rather
+     than anything tuned. The board's grid is drawn from these too, at half
+     brightness, so changing one here retints that player's whole board. */
   const PLAYERS = [
-    { name: "STRONTIUM", color: "#FF4A55" },   // crimson
-    { name: "COPPER",    color: "#2FD9A8" },   // teal
-    { name: "SODIUM",    color: "#FFD23D" },   // yellow
-    { name: "POTASSIUM", color: "#A98BFF" },   // lilac
-    { name: "BARIUM",    color: "#8FE04A" },   // apple green
-    { name: "LITHIUM",   color: "#FF5FA2" },   // magenta
-    { name: "CAESIUM",   color: "#4D9BFF" },   // blue
-    { name: "CALCIUM",   color: "#FF8A3D" }    // orange
+    { name: "RED",     color: "#FF0000" },
+    { name: "GREEN",   color: "#00FF00" },
+    { name: "BLUE",    color: "#0000FF" },
+    { name: "YELLOW",  color: "#FFFF00" },
+    { name: "MAGENTA", color: "#FF00FF" },
+    { name: "CYAN",    color: "#00FFFF" },
+    { name: "ORANGE",  color: "#FF8000" },
+    { name: "WHITE",   color: "#FFFFFF" }
   ];
   const MAX_PLAYERS = PLAYERS.length;
 
