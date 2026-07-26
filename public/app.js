@@ -1311,10 +1311,17 @@
         "  mic=" + (micOn ? "on" : "off") + "  seat=" + mySeat);
     const mt = micStream && micStream.getAudioTracks()[0];
     say("mic track: " + (mt ? mt.readyState + " enabled=" + mt.enabled + " muted=" + mt.muted : "none"));
+    say("muted by me: " + (deafened.size ? [...deafened].join(",") : "nobody"));
 
     if (!peers.size) say("no peers — is the other player in voice?");
     for (const [seat, p] of peers) {
       let sent = "?", recv = "?", lvl = "?";
+      // The negotiated direction is the one field that says whether this side is
+      // even allowed to transmit. recvonly here means the mic can never get out.
+      const tx = p.pc.getTransceivers().find(t => t.mid !== null && t.mid !== undefined);
+      const dir = tx ? (tx.currentDirection || tx.direction) + " mid=" + tx.mid +
+                       " track=" + (tx.sender.track ? tx.sender.track.kind : "none")
+                     : "no associated transceiver";
       try {
         const s = await p.pc.getStats();
         s.forEach(r => {
@@ -1325,8 +1332,9 @@
           }
         });
       } catch (e) { say("stats failed: " + e.message); }
-      say(seatName(seat) + ": " + p.pc.connectionState +
-          " track=" + !!p.gotTrack +
+      say(seatName(seat) + " [" + dir + "]");
+      say("   " + p.pc.connectionState +
+          " gotTrack=" + !!p.gotTrack +
           " paused=" + p.audio.paused +
           " muted=" + p.audio.muted +
           " sent=" + sent + " recv=" + recv + " level=" + lvl);
