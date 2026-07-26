@@ -231,6 +231,8 @@
   .seat button.ear{ padding:2px 5px; line-height:1.4; }
   .seat button.ear[data-on="0"]{ opacity:.45; }
   #voiceState{ color:var(--muted); font-size:11px; }
+  /* Off-screen rather than display:none — see the note on the element itself. */
+  #voiceSinks{ position:fixed; width:1px; height:1px; left:-9999px; top:0; overflow:hidden; }
 
   .sr{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
   [hidden]{ display:none !important; }
@@ -344,6 +346,7 @@
           </span>
           <button class="btn ghost" id="btnVoice" type="button" style="margin-top:6px">Join voice</button>
           <button class="btn ghost" id="btnMicToggle" type="button" style="margin-top:6px" data-live="0" hidden>Microphone: off</button>
+          <button class="btn ghost" id="btnVoiceCheck" type="button" style="margin-top:6px">Voice check</button>
           <p class="msg">Audio goes straight between players. Mute anyone with the speaker button on their row.</p>
         </div>
         <button class="btn ghost" id="btnRestart" type="button" style="margin-top:10px" hidden>Restart game</button>
@@ -405,8 +408,11 @@
   </div>
 </div>
 
-<!-- Incoming voice streams attach here; never shown, never recorded. -->
-<div id="voiceSinks" hidden></div>
+<!-- Incoming voice streams attach here; never shown, never recorded.
+     Deliberately NOT `hidden`: display:none stops media playing altogether in
+     several mobile browsers, so this is moved out of sight while still being
+     laid out and rendered. -->
+<div id="voiceSinks"></div>
 
 <p class="sr" id="live" aria-live="polite"></p>
 

@@ -1034,6 +1034,10 @@
     const pc = new RTCPeerConnection({ iceServers: iceServers() });
     const audio = document.createElement("audio");
     audio.autoplay = true;
+    audio.volume = 1;
+    // iOS refuses to play media inline without this and silently does nothing.
+    audio.playsInline = true;
+    audio.setAttribute("playsinline", "");
     audio.muted = deafened.has(seat);
     $("voiceSinks").append(audio);
 
@@ -1089,11 +1093,29 @@
     }
   }
 
+  /** The sender on the negotiated audio m-line, whichever transceiver that is. */
+  function audioSender(pc) {
+    const s = pc.getSenders();
+    return s.find(x => x.track && x.track.kind === "audio") || s.find(x => !x.track) || s[0] || null;
+  }
+
   const rtcErrors = [];
   function rtcErr(where, e) {
     rtcErrors.push(where + ": " + (e && e.message ? e.message : String(e)));
     if (rtcErrors.length > 20) rtcErrors.shift();
   }
+
+  /* Mobile browsers only start playback inside a user gesture, and a remote
+     track normally arrives seconds after the tap that joined voice — so the
+     play() at that moment is refused and the call is silent with no error
+     anywhere. Retry every sink on each subsequent interaction. */
+  function unlockAudio() {
+    for (const p of peers.values()) {
+      if (p.audio.paused && p.audio.srcObject) p.audio.play().catch(() => {});
+    }
+  }
+  addEventListener("pointerdown", unlockAudio, { passive: true });
+  addEventListener("keydown", unlockAudio);
 
   function closePeer(seat) {
     const p = peers.get(seat);
@@ -1190,10 +1212,19 @@
       }
       micOn = true;
       const track = micStream.getAudioTracks()[0];
-      for (const p of peers.values()) p.sender.replaceTrack(track).catch(() => {});
+      // Resolve the sender now rather than trusting the one cached at creation:
+      // on the answering side the browser may associate a different transceiver
+      // with the negotiated m-line, and replacing on the wrong one sends silence.
+      for (const p of peers.values()) {
+        const s = audioSender(p.pc);
+        if (s) s.replaceTrack(track).catch(e => rtcErr("replaceTrack", e));
+      }
     } else {
       micOn = false;
-      for (const p of peers.values()) p.sender.replaceTrack(null).catch(() => {});
+      for (const p of peers.values()) {
+        const s = audioSender(p.pc);
+        if (s) s.replaceTrack(null).catch(() => {});
+      }
       // Actually release the device, so the browser's recording indicator goes
       // out rather than merely muting a still-open microphone.
       if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
@@ -1239,6 +1270,46 @@
     $("voiceState").textContent = state;
   }
 
+  /**
+   * Prints what is actually happening into the chat log, because "connected but
+   * silent" has several causes that look identical from the outside. The packet
+   * counters are the decisive part: packetsSent says whether this device's
+   * microphone is reaching the wire at all, packetsReceived whether the other
+   * side's audio is arriving, and paused whether the browser is refusing to
+   * play what did arrive.
+   */
+  async function voiceDiagnostics() {
+    const say = t => chatNote(t);
+    say("— voice check —");
+    say("secure=" + window.isSecureContext + "  voice=" + (voiceOn ? "on" : "off") +
+        "  mic=" + (micOn ? "on" : "off") + "  seat=" + mySeat);
+    const mt = micStream && micStream.getAudioTracks()[0];
+    say("mic track: " + (mt ? mt.readyState + " enabled=" + mt.enabled + " muted=" + mt.muted : "none"));
+
+    if (!peers.size) say("no peers — is the other player in voice?");
+    for (const [seat, p] of peers) {
+      let sent = "?", recv = "?", lvl = "?";
+      try {
+        const s = await p.pc.getStats();
+        s.forEach(r => {
+          if (r.type === "outbound-rtp" && r.kind === "audio") sent = r.packetsSent;
+          if (r.type === "inbound-rtp"  && r.kind === "audio") {
+            recv = r.packetsReceived;
+            if (r.audioLevel !== undefined) lvl = (+r.audioLevel).toFixed(3);
+          }
+        });
+      } catch (e) { say("stats failed: " + e.message); }
+      say(seatName(seat) + ": " + p.pc.connectionState +
+          " track=" + !!p.gotTrack +
+          " paused=" + p.audio.paused +
+          " muted=" + p.audio.muted +
+          " sent=" + sent + " recv=" + recv + " level=" + lvl);
+    }
+    if (rtcErrors.length) say("errors: " + rtcErrors.join(" | "));
+    setChat(true);
+  }
+
+  $("btnVoiceCheck").onclick = voiceDiagnostics;
   $("btnVoice").onclick = () => { voiceOn ? voiceLeave() : voiceJoin(); };
   $("btnMicToggle").onclick = () => setMic(!micOn);
   $("btnMic").onclick = () => setMic(!micOn);
