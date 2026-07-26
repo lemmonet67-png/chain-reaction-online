@@ -1041,9 +1041,11 @@
     audio.muted = deafened.has(seat);
     $("voiceSinks").append(audio);
 
-    // One transceiver now means the mic can be added later without a new offer.
-    const tx = pc.addTransceiver("audio", { direction: "sendrecv" });
-    if (micStream) tx.sender.replaceTrack(micStream.getAudioTracks()[0]);
+    /* No transceiver here on purpose. The offerer adds one in makeOffer; the
+       answerer gets one from setRemoteDescription. Creating one on both sides
+       left the answerer with a spare that never got associated with the
+       negotiated m-line, and its microphone was then swapped onto a sender that
+       wasn't on the wire — so the host could be heard and nobody else could. */
 
     pc.onicecandidate = e => { if (e.candidate) rtc(seat, "ice", e.candidate); };
     pc.ontrack = e => {
@@ -1068,7 +1070,7 @@
       syncVoice();
     };
 
-    p = { pc, sender: tx.sender, audio, pending: [] };
+    p = { pc, audio, pending: [] };
     peers.set(seat, p);
     syncVoice();
     return p;
@@ -1093,10 +1095,18 @@
     }
   }
 
-  /** The sender on the negotiated audio m-line, whichever transceiver that is. */
+  /**
+   * The sender on the negotiated audio m-line. A transceiver only has a `mid`
+   * once it is associated with a real m-line, so requiring one is what keeps a
+   * stray transceiver from being picked and the microphone from being attached
+   * somewhere that never reaches the wire.
+   */
   function audioSender(pc) {
-    const s = pc.getSenders();
-    return s.find(x => x.track && x.track.kind === "audio") || s.find(x => !x.track) || s[0] || null;
+    const tx = pc.getTransceivers().find(t =>
+      t.mid !== null && t.mid !== undefined &&
+      ((t.sender.track && t.sender.track.kind === "audio") ||
+       (t.receiver.track && t.receiver.track.kind === "audio")));
+    return tx ? tx.sender : null;
   }
 
   const rtcErrors = [];
@@ -1130,6 +1140,12 @@
   async function makeOffer(seat) {
     const { pc } = peerFor(seat);
     try {
+      // The offerer owns the single audio m-line. sendrecv up front means the
+      // mic can be swapped in later without renegotiating.
+      if (!pc.getTransceivers().length) {
+        const tx = pc.addTransceiver("audio", { direction: "sendrecv" });
+        if (micStream) tx.sender.replaceTrack(micStream.getAudioTracks()[0]).catch(() => {});
+      }
       await pc.setLocalDescription(await pc.createOffer());
       rtc(seat, "offer", pc.localDescription);
     } catch (e) { rtcErr("offer", e); }
@@ -1152,6 +1168,16 @@
       try {
         if (m.kind === "offer") {
           await pc.setRemoteDescription(m.data);
+          /* setRemoteDescription hands the answerer a recvonly transceiver, so
+             without this the answer says recvonly and this side can never
+             transmit no matter what track is attached. Open it, and attach the
+             mic if one is already running. */
+          for (const t of pc.getTransceivers()) {
+            if (t.receiver && t.receiver.track && t.receiver.track.kind === "audio") {
+              t.direction = "sendrecv";
+              if (micStream) t.sender.replaceTrack(micStream.getAudioTracks()[0]).catch(() => {});
+            }
+          }
           await pc.setLocalDescription(await pc.createAnswer());
           rtc(seat, "answer", pc.localDescription);
           await flushCandidates(p);
