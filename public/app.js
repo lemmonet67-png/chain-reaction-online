@@ -50,6 +50,10 @@
    *
    * "console" is the instrument-panel look this project had before; it runs
    * through the same code with the depth flattened out.
+   *
+   * Both share one palette. They used to carry their own, so switching style
+   * silently recoloured every player — a seat's colour is its identity and has
+   * nothing to do with how the board is drawn.
    */
   const THEMES = {
     original: {
@@ -60,8 +64,7 @@
     console: {
       back: 1, orbPlane: 1, gridDim: 0, line: "#1B2733",
       orb: 0.115, cluster: 0.155, rim: 1, glow: 1.9, tintCell: true,
-      colors: ["#FF4A55", "#2FD9A8", "#FFD23D", "#A98BFF",
-               "#8FE04A", "#FF5FA2", "#4D9BFF", "#FF8A3D"]
+      colors: PLAYERS.map(p => p.color)
     }
   };
 
@@ -201,9 +204,9 @@
   /** How long the current wave should take — shorter when moves are backing up. */
   function waveMs() {
     if (REDUCED) return 70;
-    if (moveQueue.length >= 3) return 55;
-    if (moveQueue.length >= 1) return 110;
-    return 190;
+    if (moveQueue.length >= 3) return 90;
+    if (moveQueue.length >= 1) return 170;
+    return 300;
   }
 
   function playNextMove() {
@@ -299,12 +302,14 @@
     setTimeout(() => {
       if (mode !== "local" || animating || logical.over || logical.cur !== me || !localCPU[me]) return;
       const m = E.chooseMove(logical, me);
-      if (m >= 0) playLocal(m);
+      if (m >= 0) playLocal(m, true);
     }, REDUCED ? 120 : 420);
   }
 
-  function playLocal(idx) {
+  function playLocal(idx, byCPU) {
     if (animating || logical.over || !E.isLegal(logical, idx, logical.cur)) return;
+    // Tapping during the CPU's think delay would otherwise place its orb for it.
+    if (!byCPU && localCPU[logical.cur]) return;
     const player = logical.cur;
     const settled = E.cloneState(logical);
     const res = E.applyMove(settled, idx, player);
@@ -440,14 +445,20 @@
   }
 
   /** Where each of a cell's orbs sits relative to its site. */
-  function orbOffsets(n, i, t) {
+  function orbOffsets(n, cap, i, t) {
     if (n <= 0) return [];
     if (n === 1) return [[0, 0]];             // a lone orb is dead centre
     const R = cell * theme().cluster;
+    // Rate is keyed to how many orbs the cell still needs, not to how full it
+    // is: one short of critical always spins fastest, and every orb further off
+    // halves it. Keying it to the fill fraction left a 2-orb and a 3-orb cell
+    // only 1.4x apart, which reads as the same speed.
+    const short = Math.max(1, cap - n);       // 1 == one orb from detonating
     // Every cell keeps its own phase, otherwise a board full of pairs rotates in
     // lockstep and reads as one moving object. The index seeds it so a cell's
     // orientation doesn't jump when the board repaints.
-    const a0 = (REDUCED ? 0 : t / 900) + (i % 7) * 0.8976;
+    const a0 = (REDUCED ? 0 : (t / 1000) * (6.5 / short))
+             + (i % 7) * 0.8976;
     return Array.from({ length: n }, (_, k) => {
       const a = a0 + (k * 2 * Math.PI) / n;
       return [Math.cos(a) * R, Math.sin(a) * R];
@@ -530,6 +541,7 @@
 
     const C = display.cols, R = display.rows;
     const T = theme();
+    const { cap } = E.topo(C, R);
 
     ctx.clearRect(0, 0, cw, ch);
     drawGrid(C, R);
@@ -550,7 +562,7 @@
         ctx.strokeRect(gx + 1.5, gy + 1.5, cell - 3, cell - 3);
       }
 
-      for (const [dx, dy] of orbOffsets(display.count[i], i, now)) {
+      for (const [dx, dy] of orbOffsets(display.count[i], cap[i], i, now)) {
         drawOrb(x + dx, y + dy, orbR, col);
       }
     }
@@ -700,11 +712,16 @@
     if (!logical || !display) return;
     const st = logical;
 
-    $("localSeats").replaceChildren(
-      ...Array.from({ length: st.numPlayers }, (_, p) => seatRow(p, st)));
-    if (mode === "online" && roomCode) {
-      $("roomSeats").replaceChildren(
+    // syncUI runs on every wave of a cascade. Rebuilding the seat rows that
+    // often churns the DOM — and discards the button you may be clicking — for
+    // a panel that is closed almost all of the time.
+    if (!sheet.hidden) {
+      $("localSeats").replaceChildren(
         ...Array.from({ length: st.numPlayers }, (_, p) => seatRow(p, st)));
+      if (mode === "online" && roomCode) {
+        $("roomSeats").replaceChildren(
+          ...Array.from({ length: st.numPlayers }, (_, p) => seatRow(p, st)));
+      }
     }
 
     // The board itself carries the turn; the veil is only for states the
@@ -720,7 +737,10 @@
       const need = seats.filter(s => !s.cpu && !s.connected).length;
       title = "Room " + roomCode;
       note = "Waiting for " + need + " more player" + (need === 1 ? "" : "s");
-    } else if (st.over) {
+    } else if (st.over && !animating) {
+      // `logical` holds the settled board from the moment the move is made, so
+      // without this the result appears over the top of the winning chain and
+      // gives it away before it has finished playing.
       title = st.winner >= 0 ? seatName(st.winner) + " wins" : "Stalemate";
       note = mode === "local" ? "Tap to play again" : isHost ? "Restart from the menu" : "";
     }
@@ -814,6 +834,7 @@
     sheet.hidden = !open;
     scrim.hidden = !open;
     $("btnMenu").setAttribute("aria-expanded", String(open));
+    if (open) syncUI();          // the seat rows are only kept fresh while open
   }
   $("btnMenu").onclick = () => setMenu(sheet.hidden);
   scrim.onclick = () => setMenu(false);
@@ -889,24 +910,31 @@
 
   /* ── wiring ──────────────────────────────────────────────────────────── */
 
-  const nameField = $("playerName");
-  nameField.value = myName;
+  /* The same name is editable from the lobby and from preferences; whichever
+     one you type into, the other has to follow. */
+  const nameFields = [$("playerName"), $("playerNameLobby")];
+  const showName = () => nameFields.forEach(f => { if (f.value !== myName) f.value = myName; });
+  showName();
 
-  function commitName() {
-    const v = cleanName(nameField.value);
-    if (v === myName) return;
+  function commitName(src) {
+    const v = cleanName(src.value);
+    if (v === myName) { showName(); return; }
     myName = v;
     store.set(STORE.name, myName);
     // Tell the room, and keep the reconnect intent carrying the new name.
     if (mode === "online" && roomCode) sendNet({ type: "name", name: myName });
     if (intent) intent.name = myName;
+    showName();
     syncUI();
   }
-  nameField.addEventListener("change", commitName);
-  nameField.addEventListener("blur", commitName);
-  nameField.addEventListener("keydown", e => {
-    if (e.key === "Enter") { commitName(); nameField.blur(); }
-  });
+
+  for (const f of nameFields) {
+    f.addEventListener("change", () => commitName(f));
+    f.addEventListener("blur", () => commitName(f));
+    f.addEventListener("keydown", e => {
+      if (e.key === "Enter") { commitName(f); f.blur(); }
+    });
+  }
 
   // A finished local game restarts straight from the board, no menu trip.
   $("veil").addEventListener("click", () => {
@@ -960,7 +988,10 @@
     pendingWaves: pendingWaves.length, moveQueue: moveQueue.length,
     cur: logical && logical.cur, over: logical && logical.over,
     cpu: localCPU.slice(0, logical ? logical.numPlayers : 0),
-    waveStart, waveDur, now: performance.now(), cell
+    waveStart, waveDur, now: performance.now(), cell,
+    // Lets the spin rate be measured without waiting on the render loop, which
+    // is paused whenever the tab is hidden.
+    offsets: orbOffsets
   });
 
   syncSegments();

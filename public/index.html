@@ -231,6 +231,13 @@
   <!-- online lobby -->
   <div id="onlinePane" hidden>
     <div id="preJoin">
+      <!-- A name only matters once other people can see it, so it belongs here
+           as well as on the preferences screen. -->
+      <div class="grp">
+        <span class="lbl"><label for="playerNameLobby">Your name</label></span>
+        <input id="playerNameLobby" class="field" maxlength="14" autocomplete="nickname"
+               spellcheck="false" placeholder="Red">
+      </div>
       <div class="grp">
         <span class="lbl" id="lblRP">Players</span>
         <div class="seg" id="segRoomPlayers" role="group" aria-labelledby="lblRP"></div>
