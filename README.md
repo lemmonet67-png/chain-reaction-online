@@ -108,22 +108,37 @@ common on mobile carriers, university and office networks — there is no direct
 path, and that pair fails no matter how long it retries. Everyone else in the
 room is unaffected and chat keeps working.
 
-This is not something the affected player can fix. It's one setting on the
-server, and then it works for everyone. On Render: **Environment** →
+This is not something the affected player can fix. It's set once on the server
+and then works for everyone — the credentials are handed to each client as it
+joins, so nobody configures a browser. On Render: **Environment** →
+
+**Shared secret** (coturn's REST scheme, and Metered's static-auth endpoint).
+Preferred: the server mints a credential that expires in 12 hours, so no
+permanent password is ever sent to a browser.
 
 | Variable | Example |
 |---|---|
 | `TURN_URLS` | `turn:relay.example.com:3478` (comma-separate for several) |
-| `TURN_USERNAME` | your relay username |
-| `TURN_CREDENTIAL` | your relay password |
+| `TURN_SECRET` | the relay's shared secret |
 
-The server hands these to every client as it joins, so nobody configures a
-browser. Where to get one:
+**Static credentials**, if that's all your provider gives you:
 
-- **A managed TURN provider** — several offer free or cheap tiers; check current
-  terms since they change.
-- **Self-host [coturn](https://github.com/coturn/coturn)** on any small VPS.
-  Cheapest if you already have a box.
+| Variable | Example |
+|---|---|
+| `TURN_URLS` | `turn:relay.example.com:3478` |
+| `TURN_USERNAME` | username |
+| `TURN_CREDENTIAL` | password |
+
+`TURN_SECRET` wins if both are set. Where to get a relay:
+
+- **[Cloudflare TURN](https://www.cloudflare.com/products/turn-sfu/)** — much the
+  largest free allowance. Issues short-lived credentials through its own API
+  rather than either scheme above, so it needs a little more code than these two
+  env vars.
+- **[Metered Open Relay](https://www.metered.ca/tools/openrelay/)** — 20 GB/month
+  free, needs a free account.
+- **Self-host [coturn](https://github.com/coturn/coturn)** on any small VPS, with
+  `static-auth-secret` matching `TURN_SECRET`.
 
 Relayed audio flows through that server, so it costs bandwidth — only the pairs
 that need it use it; everyone else still connects directly.

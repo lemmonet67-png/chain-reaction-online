@@ -11,6 +11,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 const Engine = require("./public/engine.js");
 
@@ -97,10 +98,24 @@ const cleanChat  = s =>
  * On Render: Environment → TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL.
  * TURN_URLS may list several, comma separated.
  */
+const TURN_TTL = 12 * 3600;            // seconds a minted credential stays valid
+
 function turnServers() {
   const urls = String(process.env.TURN_URLS || "")
     .split(",").map(s => s.trim()).filter(Boolean);
   if (!urls.length) return [];
+
+  /* Shared-secret mode (coturn's REST scheme, and what Metered's static-auth
+     endpoint expects): derive a short-lived username/password per join rather
+     than shipping a permanent password to every browser. The username is its
+     own expiry, which is what makes it verifiable without any state. */
+  const secret = process.env.TURN_SECRET;
+  if (secret) {
+    const username = (Math.floor(Date.now() / 1000) + TURN_TTL) + ":chain-reaction";
+    const credential = crypto.createHmac("sha1", secret).update(username).digest("base64");
+    return [{ urls, username, credential }];
+  }
+
   const entry = { urls };
   if (process.env.TURN_USERNAME)   entry.username   = process.env.TURN_USERNAME;
   if (process.env.TURN_CREDENTIAL) entry.credential = process.env.TURN_CREDENTIAL;
