@@ -373,6 +373,26 @@ function handle(sock, msg) {
       return;
     }
 
+    /* Voice signalling relay. Audio itself is peer-to-peer and never touches
+       this process — what passes through here is only the WebRTC handshake
+       (offers, answers, ICE candidates), which is forwarded verbatim and not
+       stored. `to` absent means announce to the whole room. */
+    case "rtc": {
+      const room = rooms.get(sock.room);
+      if (!room) return;
+      const payload = { type: "rtc", from: sock.seat, kind: msg.kind, data: msg.data };
+      if (msg.to === undefined || msg.to === null) {
+        broadcast(room, payload, sock);
+      } else {
+        const to = msg.to;
+        if (!Number.isInteger(to) || to < 0 || to >= room.numPlayers) return;
+        const target = room.seats[to];
+        if (target && target.sock) send(target.sock, payload);
+      }
+      room.touched = Date.now();
+      return;
+    }
+
     case "ping":
       return send(sock, { type: "pong" });
   }

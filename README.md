@@ -88,6 +88,37 @@ have no counterpart there and live in the menu. `Console` under Preferences →
 Board is this project's own earlier look, kept as an option; it runs through the
 same renderer with the depth flattened to zero.
 
+### Voice
+
+Behind **Join voice** in the room menu. Audio is peer-to-peer over WebRTC — the
+server only relays the handshake and never carries or stores a sample.
+
+- Your **microphone is off** until you switch it on, every session. Turning it
+  off releases the device, so the browser's recording indicator goes out rather
+  than leaving an open mic muted in software.
+- A live mic turns the toolbar button **red**, so it is never a mystery whether
+  you are transmitting.
+- Each other player's row gets a **speaker button** — mute anyone individually.
+  Your choices persist across reloads.
+- Needs HTTPS (or localhost) — browsers won't grant a microphone otherwise.
+
+**Some pairs will not connect.** STUN only tells each side its public address;
+it cannot carry audio. When both players are behind strict NAT there is no
+direct path and that pair fails no matter how long it retries — it needs a TURN
+relay, which costs money to run and so isn't bundled. Everyone else in the room
+is unaffected, and chat keeps working. To add one:
+
+```js
+localStorage["cr.turn"] = JSON.stringify(
+  { urls: "turn:your.host:3478", username: "u", credential: "p" })
+```
+
+> **Voice has not been confirmed end to end.** Signalling is verified — offers,
+> answers and candidates all exchange cleanly with zero errors — but two peers
+> on one machine sit behind a single NAT with the same reflexive address, so ICE
+> has no route to complete and no audio ever flows. Confirming it needs two
+> people on different networks.
+
 ### Chat is not filtered
 
 Messages are relayed and displayed exactly as typed. There is no word list,

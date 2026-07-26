@@ -18,7 +18,8 @@
   const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const STORE = {
     room: "cr.room", token: "cr.token", sound: "cr.sound",
-    style: "cr.style", name: "cr.name", vibrate: "cr.vibrate", colours: "cr.colours"
+    style: "cr.style", name: "cr.name", vibrate: "cr.vibrate", colours: "cr.colours",
+    deaf: "cr.deafened"
   };
 
   const $ = id => document.getElementById(id);
@@ -85,6 +86,12 @@
     }
   }
   let colours = loadColours();
+  // Who you've chosen not to hear survives a reload — it's a decision about a
+  // person, not a per-session setting.
+  const initialDeafened = (() => {
+    try { return new Set(JSON.parse(store.get("cr.deafened") || "[]")); }
+    catch (_) { return new Set(); }
+  })();
   const colorOf = p => colours[p] || theme().colors[p];
 
   const cleanName = s => String(s == null ? "" : s).trim().slice(0, 14);
@@ -390,12 +397,20 @@
       case "room": {
         seats = m.seats;
         started = m.started;
+        // Drop voice links to anyone who has gone; a reconnect re-announces.
+        for (const seat of [...peers.keys()]) {
+          if (!seats[seat] || !seats[seat].connected) closePeer(seat);
+        }
         adoptState(m.state, m.reset);
         break;
       }
       case "move": {
         moveQueue.push(m);
         if (!animating) playNextMove();
+        break;
+      }
+      case "rtc": {
+        onRtc(m);
         break;
       }
       case "chat": {
@@ -719,6 +734,21 @@
       tag.textContent = info.cpu ? "CPU" : info.connected ? "LIVE" : "EMPTY";
     }
 
+    // In voice, every other seat gets its own listen switch.
+    if (voiceOn && mode === "online" && p !== mySeat) {
+      const ear = document.createElement("button");
+      ear.type = "button";
+      ear.className = "st ear";
+      const hearing = !deafened.has(p);
+      ear.dataset.on = hearing ? "1" : "0";
+      ear.textContent = hearing ? "🔊" : "🔇";
+      ear.title = hearing ? "Mute " + seatName(p) : "Unmute " + seatName(p);
+      ear.setAttribute("aria-label", (hearing ? "Mute " : "Unmute ") + seatName(p));
+      ear.onclick = () => { setListen(p, deafened.has(p)); syncUI(); };
+      row.append(pip, who, ear, tag);
+      return row;
+    }
+
     row.append(pip, who, tag);
     return row;
   }
@@ -778,6 +808,7 @@
       if (joined) $("roomCode").textContent = roomCode;
     }
     syncChat();
+    syncVoice();
     syncUI();
   }
 
@@ -838,6 +869,7 @@
       store.del(STORE.room); store.del(STORE.token);
       if (location.hash) history.replaceState(null, "", location.pathname);
     }
+    voiceLeave();
     roomCode = null; mySeat = -1; isHost = false; seats = []; started = false;
     // The log belongs to the room you just left, not to the next one.
     chatLog = []; chatUnread = 0;
@@ -944,6 +976,240 @@
     sendNet({ type: "chat", text });
     chatInput.value = "";
   });
+
+  /* ── voice ───────────────────────────────────────────────────────────────
+   *
+   * Audio is peer-to-peer over WebRTC. The room server only relays the
+   * handshake; no audio passes through it and nothing is recorded anywhere.
+   *
+   * Both ends of a pair need one agreed offerer or they collide, so the rule is
+   * simply that the lower seat number always offers. That removes the whole
+   * glare problem without a negotiation state machine.
+   *
+   * Each connection is built with one sendrecv audio transceiver up front, even
+   * before a microphone exists. Turning the mic on and off then just swaps a
+   * track in and out of that sender, so it never has to renegotiate mid-call.
+   *
+   * Needs a secure context: HTTPS in production, localhost in development.
+   */
+  const ICE = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" }
+  ];
+
+  /**
+   * STUN only tells each side its public address; it cannot carry audio. When
+   * both players are behind strict NAT there is no direct path and the call
+   * fails no matter how long it retries — that pair needs a TURN relay, which
+   * has a running cost and so isn't shipped with one.
+   *
+   * Add one without touching this file:
+   *   localStorage["cr.turn"] = JSON.stringify(
+   *     { urls: "turn:host:3478", username: "u", credential: "p" })
+   *
+   * Two peers on one machine behind one router hit exactly this, which is why
+   * a same-machine test can't confirm voice works.
+   */
+  function iceServers() {
+    const list = ICE.slice();
+    try {
+      const t = JSON.parse(store.get("cr.turn") || "null");
+      if (t && t.urls) list.push(t);
+    } catch (_) { /* malformed override */ }
+    return list;
+  }
+
+  let voiceOn = false, micOn = false, micStream = null;
+  const peers = new Map();                  // seat -> { pc, sender, audio }
+  const deafened = initialDeafened;          // seats we've chosen not to hear
+
+  const rtc = (to, kind, data) => sendNet({ type: "rtc", to, kind, data });
+  const voiceNote = text => { chatNote(text); };
+  const saveDeafened = () => store.set(STORE.deaf, JSON.stringify([...deafened]));
+
+  function peerFor(seat) {
+    let p = peers.get(seat);
+    if (p) return p;
+
+    const pc = new RTCPeerConnection({ iceServers: iceServers() });
+    const audio = document.createElement("audio");
+    audio.autoplay = true;
+    audio.muted = deafened.has(seat);
+    $("voiceSinks").append(audio);
+
+    // One transceiver now means the mic can be added later without a new offer.
+    const tx = pc.addTransceiver("audio", { direction: "sendrecv" });
+    if (micStream) tx.sender.replaceTrack(micStream.getAudioTracks()[0]);
+
+    pc.onicecandidate = e => { if (e.candidate) rtc(seat, "ice", e.candidate); };
+    pc.ontrack = e => {
+      audio.srcObject = e.streams[0];
+      audio.play().catch(() => voiceNote("Click anywhere to allow audio playback."));
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "failed") {
+        voiceNote("No voice route to " + seatName(seat) +
+                  " — that pair needs a TURN relay. Chat still works.");
+      }
+      syncVoice();
+    };
+
+    p = { pc, sender: tx.sender, audio, pending: [] };
+    peers.set(seat, p);
+    syncVoice();
+    return p;
+  }
+
+  /* Signalling is ordered on the wire, but onRtc is async — without a queue an
+     ICE candidate can be applied while the offer ahead of it is still awaiting,
+     and addIceCandidate then throws and the candidate is lost for good. */
+  const rtcQueue = new Map();
+  function queueRtc(seat, job) {
+    const prev = rtcQueue.get(seat) || Promise.resolve();
+    const next = prev.then(job, job);
+    rtcQueue.set(seat, next.catch(() => {}));
+  }
+
+  /* Candidates that outran their description still have to be applied, so they
+     wait here rather than being dropped. */
+  async function flushCandidates(p) {
+    while (p.pending.length) {
+      try { await p.pc.addIceCandidate(p.pending.shift()); }
+      catch (e) { rtcErr("flush", e); }
+    }
+  }
+
+  const rtcErrors = [];
+  function rtcErr(where, e) {
+    rtcErrors.push(where + ": " + (e && e.message ? e.message : String(e)));
+    if (rtcErrors.length > 20) rtcErrors.shift();
+  }
+
+  function closePeer(seat) {
+    const p = peers.get(seat);
+    if (!p) return;
+    try { p.pc.close(); } catch (_) { /* already gone */ }
+    p.audio.srcObject = null;
+    p.audio.remove();
+    peers.delete(seat);
+    syncVoice();
+  }
+
+  async function makeOffer(seat) {
+    const { pc } = peerFor(seat);
+    try {
+      await pc.setLocalDescription(await pc.createOffer());
+      rtc(seat, "offer", pc.localDescription);
+    } catch (e) { rtcErr("offer", e); }
+  }
+
+  async function onRtc(m) {
+    const seat = m.from;
+    if (!voiceOn || seat === mySeat) return;
+
+    if (m.kind === "hello") {                 // someone joined voice
+      if (mySeat < seat) makeOffer(seat); else rtc(seat, "here", null);
+      return;
+    }
+    if (m.kind === "here") { if (mySeat < seat) makeOffer(seat); return; }
+    if (m.kind === "bye")  { closePeer(seat); return; }
+
+    queueRtc(seat, async () => {
+      const p = peerFor(seat);
+      const pc = p.pc;
+      try {
+        if (m.kind === "offer") {
+          await pc.setRemoteDescription(m.data);
+          await pc.setLocalDescription(await pc.createAnswer());
+          rtc(seat, "answer", pc.localDescription);
+          await flushCandidates(p);
+        } else if (m.kind === "answer") {
+          await pc.setRemoteDescription(m.data);
+          await flushCandidates(p);
+        } else if (m.kind === "ice") {
+          // A candidate can legitimately arrive before its description.
+          if (!pc.remoteDescription) { p.pending.push(m.data); return; }
+          await pc.addIceCandidate(m.data);
+        }
+      } catch (e) { rtcErr(m.kind, e); }
+    });
+  }
+
+  function voiceJoin() {
+    if (!roomCode || netState !== "open") { voiceNote("Join a room first."); return; }
+    if (!window.RTCPeerConnection) { voiceNote("This browser has no WebRTC support."); return; }
+    voiceOn = true;
+    rtc(null, "hello", null);                 // null = announce to the room
+    voiceNote("You joined voice. Your mic is off.");
+    syncVoice();
+  }
+
+  function voiceLeave() {
+    if (!voiceOn) return;
+    setMic(false);
+    voiceOn = false;
+    rtc(null, "bye", null);
+    for (const seat of [...peers.keys()]) closePeer(seat);
+    voiceNote("You left voice.");
+    syncVoice();
+  }
+
+  /** Your own microphone. Off until you say otherwise, every time. */
+  async function setMic(on) {
+    if (on) {
+      if (!voiceOn) voiceJoin();
+      if (!micStream) {
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+          });
+        } catch (_) {
+          voiceNote("Microphone unavailable — check the browser's permission for this site.");
+          micOn = false; syncVoice();
+          return;
+        }
+      }
+      micOn = true;
+      const track = micStream.getAudioTracks()[0];
+      for (const p of peers.values()) p.sender.replaceTrack(track).catch(() => {});
+    } else {
+      micOn = false;
+      for (const p of peers.values()) p.sender.replaceTrack(null).catch(() => {});
+      // Actually release the device, so the browser's recording indicator goes
+      // out rather than merely muting a still-open microphone.
+      if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    }
+    syncVoice();
+  }
+
+  /** Whether we hear a given seat. */
+  function setListen(seat, on) {
+    if (on) deafened.delete(seat); else deafened.add(seat);
+    saveDeafened();
+    const p = peers.get(seat);
+    if (p) p.audio.muted = !on;
+    syncVoice();
+  }
+
+  function syncVoice() {
+    const inRoom = mode === "online" && !!roomCode;
+    $("btnMic").hidden = !(inRoom && voiceOn);
+    $("btnMic").dataset.live = micOn ? "1" : "0";
+    $("btnMic").setAttribute("aria-label", micOn ? "Microphone on" : "Microphone off");
+    $("voiceGroup").hidden = !inRoom;
+    $("btnVoice").textContent = voiceOn ? "Leave voice" : "Join voice";
+    const mic = $("btnMicToggle");
+    mic.hidden = !voiceOn;
+    mic.textContent = micOn ? "Microphone: on" : "Microphone: off";
+    mic.dataset.live = micOn ? "1" : "0";
+    const n = [...peers.values()].filter(p => p.pc.connectionState === "connected").length;
+    $("voiceState").textContent = voiceOn
+      ? (n ? n + " connected" : "waiting for others") : "";
+  }
+
+  $("btnVoice").onclick = () => { voiceOn ? voiceLeave() : voiceJoin(); };
+  $("btnMicToggle").onclick = () => setMic(!micOn);
+  $("btnMic").onclick = () => setMic(!micOn);
 
   /* ── menu and preferences ────────────────────────────────────────────── */
 
@@ -1114,7 +1380,21 @@
     waveStart, waveDur, now: performance.now(), cell,
     // Lets the spin rate be measured without waiting on the render loop, which
     // is paused whenever the tab is hidden.
-    offsets: orbOffsets
+    offsets: orbOffsets,
+    voice: {
+      voiceOn, micOn, mySeat,
+      deafened: [...deafened],
+      errors: rtcErrors.slice(),
+      handles: [...peers.entries()],        // raw pcs, for getStats() when debugging
+      peers: [...peers.entries()].map(([seat, p]) => ({
+        seat,
+        connection: p.pc.connectionState,
+        ice: p.pc.iceConnectionState,
+        signaling: p.pc.signalingState,
+        hasRemoteAudio: !!p.audio.srcObject,
+        muted: p.audio.muted
+      }))
+    }
   });
 
   syncSegments();

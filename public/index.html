@@ -221,6 +221,17 @@
   .toast b{ color:var(--mc); font-weight:600; }
   .toast span{ color:#E4E4E4; }
 
+  /* ── voice ──────────────────────────────────────────────────────────── */
+
+  /* A live microphone must be obvious at a glance, not buried in a menu. */
+  .micBtn[data-live="1"]{ background:#C62828; }
+  .micBtn[data-live="1"]:hover{ background:#D32F2F; }
+  .micBtn[data-live="0"]{ opacity:.55; }
+  #btnMicToggle[data-live="1"]{ background:#C62828; border-color:#C62828; color:#fff; }
+  .seat button.ear{ padding:2px 5px; line-height:1.4; }
+  .seat button.ear[data-on="0"]{ opacity:.45; }
+  #voiceState{ color:var(--muted); font-size:11px; }
+
   .sr{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
   [hidden]{ display:none !important; }
   @media (prefers-reduced-motion: reduce){ *{ animation-duration:.001ms !important; } }
@@ -237,6 +248,8 @@
     </svg>
     <h1>Chain Reaction</h1>
     <span class="barStatus" id="barStatus" data-net="idle" hidden><span class="dot"></span><span id="barStatusText"></span></span>
+    <button class="iconBtn micBtn" id="btnMic" type="button" hidden data-live="0"
+            aria-label="Microphone off">&#127908;</button>
     <button class="iconBtn chatBtn" id="btnChat" type="button" hidden
             aria-expanded="false" aria-label="Chat">&#128172;<span class="badge" id="chatBadge" hidden>0</span></button>
     <button class="iconBtn" id="btnMenu" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Menu">&#8942;</button>
@@ -325,6 +338,14 @@
           <button class="btn ghost" id="btnCopy" type="button" style="width:auto; padding:7px 12px; font-size:13px">Copy link</button>
         </div>
         <div class="seats" id="roomSeats"></div>
+        <div id="voiceGroup" hidden style="margin-top:12px">
+          <span class="lbl" style="display:flex; justify-content:space-between; align-items:center">
+            Voice <em id="voiceState" style="font-style:normal"></em>
+          </span>
+          <button class="btn ghost" id="btnVoice" type="button" style="margin-top:6px">Join voice</button>
+          <button class="btn ghost" id="btnMicToggle" type="button" style="margin-top:6px" data-live="0" hidden>Microphone: off</button>
+          <p class="msg">Audio goes straight between players. Mute anyone with the speaker button on their row.</p>
+        </div>
         <button class="btn ghost" id="btnRestart" type="button" style="margin-top:10px" hidden>Restart game</button>
         <button class="btn ghost" id="btnLeave" type="button" style="margin-top:6px">Leave room</button>
       </div>
@@ -383,6 +404,9 @@
     </div>
   </div>
 </div>
+
+<!-- Incoming voice streams attach here; never shown, never recorded. -->
+<div id="voiceSinks" hidden></div>
 
 <p class="sr" id="live" aria-live="polite"></p>
 
