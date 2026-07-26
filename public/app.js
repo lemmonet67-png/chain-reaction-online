@@ -1043,11 +1043,21 @@
 
     pc.onicecandidate = e => { if (e.candidate) rtc(seat, "ice", e.candidate); };
     pc.ontrack = e => {
-      audio.srcObject = e.streams[0];
-      audio.play().catch(() => voiceNote("Click anywhere to allow audio playback."));
+      /* A track added with replaceTrack on a transceiver created up front
+         belongs to no MediaStream, so e.streams comes back empty. Reading
+         e.streams[0] then yields undefined, srcObject is set to nothing, and
+         the call connects perfectly while staying silent forever. Wrap the
+         bare track instead. */
+      audio.srcObject = e.streams[0] || new MediaStream([e.track]);
+      p.gotTrack = true;
+      audio.play().catch(() => voiceNote("Tap the page once to allow audio."));
+      syncVoice();
     };
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "failed") {
+      const s = pc.connectionState;
+      // Say what happened either way — a silent call gives you nothing to go on.
+      if (s === "connected") voiceNote("Voice connected to " + seatName(seat) + ".");
+      if (s === "failed") {
         voiceNote("No voice route to " + seatName(seat) +
                   " — that pair needs a TURN relay. Chat still works.");
       }
@@ -1159,6 +1169,15 @@
     if (on) {
       if (!voiceOn) voiceJoin();
       if (!micStream) {
+        // Browsers hand out microphones only on a secure page. Over plain
+        // http:// — which is what a phone gets when it opens a laptop's LAN
+        // address — the API is simply absent, and the failure otherwise looks
+        // identical to a denied permission.
+        if (!window.isSecureContext || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+          voiceNote("This page isn't HTTPS, so the browser won't allow a microphone here. Listening still works.");
+          micOn = false; syncVoice();
+          return;
+        }
         try {
           micStream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
@@ -1202,9 +1221,22 @@
     mic.hidden = !voiceOn;
     mic.textContent = micOn ? "Microphone: on" : "Microphone: off";
     mic.dataset.live = micOn ? "1" : "0";
-    const n = [...peers.values()].filter(p => p.pc.connectionState === "connected").length;
-    $("voiceState").textContent = voiceOn
-      ? (n ? n + " connected" : "waiting for others") : "";
+    // Enough detail to tell "nobody else joined" from "joined but no route"
+    // from "connected but hearing nothing", which need different fixes.
+    const all = [...peers.values()];
+    const up = all.filter(p => p.pc.connectionState === "connected");
+    const bad = all.filter(p => p.pc.connectionState === "failed").length;
+    const silent = up.filter(p => !p.gotTrack).length;
+    let state = "";
+    if (voiceOn) {
+      if (!all.length) state = "waiting for others";
+      else if (up.length) {
+        state = up.length + " connected";
+        if (silent) state += ", " + silent + " with no audio yet";
+        if (bad) state += ", " + bad + " failed";
+      } else state = bad ? bad + " failed — needs TURN" : "connecting…";
+    }
+    $("voiceState").textContent = state;
   }
 
   $("btnVoice").onclick = () => { voiceOn ? voiceLeave() : voiceJoin(); };
