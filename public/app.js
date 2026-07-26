@@ -49,7 +49,9 @@
    *             inside, not polished.
    *
    * "console" is the instrument-panel look this project had before; it runs
-   * through the same code with the depth flattened out.
+   * through the same code with the depth flattened out. It takes the same
+   * player-coloured lattice — a fixed slate grid left it with no turn cue at
+   * all, since that colour is the only one the original ever gives you.
    *
    * Both share one palette. They used to carry their own, so switching style
    * silently recoloured every player — a seat's colour is its identity and has
@@ -62,7 +64,7 @@
       colors: PLAYERS.map(p => p.color)
     },
     console: {
-      back: 1, orbPlane: 1, gridDim: 0, line: "#1B2733",
+      back: 1, orbPlane: 1, gridDim: 0.51, line: null,
       orb: 0.115, cluster: 0.155, rim: 1, glow: 1.9, tintCell: true,
       colors: PLAYERS.map(p => p.color)
     }
@@ -204,9 +206,9 @@
   /** How long the current wave should take — shorter when moves are backing up. */
   function waveMs() {
     if (REDUCED) return 70;
-    if (moveQueue.length >= 3) return 90;
-    if (moveQueue.length >= 1) return 170;
-    return 300;
+    if (moveQueue.length >= 3) return 80;
+    if (moveQueue.length >= 1) return 145;
+    return 240;
   }
 
   function playNextMove() {
