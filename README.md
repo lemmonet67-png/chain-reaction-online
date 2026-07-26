@@ -52,6 +52,11 @@ seat is filled.
 
 - Refreshing or losing your connection is safe. Your seat is held and reclaimed
   automatically via a token in `localStorage`.
+- **Chat** lives behind the speech-bubble button, which only appears once you're
+  in a room. Messages also float over the board for a few seconds so you don't
+  have to keep the panel open while you play, and the button carries an unread
+  count. The last 60 messages are kept server-side, so reconnecting catches you
+  up on what you missed.
 - If someone doesn't show up or leaves for good, the host can click their
   `EMPTY` tag to hand the seat to the CPU and keep the game moving.
 - Only the host can restart the game.
@@ -82,6 +87,24 @@ original has no network, so the room lobby, seat list and connection indicator
 have no counterpart there and live in the menu. `Console` under Preferences →
 Board is this project's own earlier look, kept as an option; it runs through the
 same renderer with the depth flattened to zero.
+
+### Chat is not filtered
+
+Messages are relayed and displayed exactly as typed. There is no word list,
+nothing is bleeped, and nothing is rewritten. This is a room you share by
+sending someone a four-letter code — moderate it by choosing who you send it to.
+
+Three limits exist, none of which look at what a message says:
+
+- **Control characters are stripped** and messages are capped at 300 characters,
+  so one message can't corrupt or blow up everyone else's view.
+- **Six messages per four seconds per connection**, so one client can't flood
+  the room or push the backlog out. It counts messages; it never reads them.
+- **Text is rendered with `textContent`, never `innerHTML`.** This is a security
+  boundary, not a content one: your text is drawn in every other player's
+  browser, and building that markup by hand would let anyone in a room run
+  script in everyone else's tab. Removing it would not make chat freer, it would
+  make it an attack.
 
 ## Deploying
 

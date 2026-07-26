@@ -80,6 +80,18 @@ const CONTROL = new RegExp("[\u0000-\u001F\u007F]", "g");
 const cleanName = s =>
   String(s == null ? "" : s).replace(CONTROL, "").trim().slice(0, 14);
 
+/* Chat is relayed exactly as typed — there is no word list and nothing is
+   rewritten. The two limits below are about the transport, not the content:
+   control characters would corrupt the line rather than say anything, and a
+   length cap stops one message from blowing up every other player's view. */
+const CHAT_MAX   = 300;
+const cleanChat  = s =>
+  String(s == null ? "" : s).replace(CONTROL, " ").trim().slice(0, CHAT_MAX);
+
+const CHAT_LOG        = 60;    // kept so a reconnect can catch up
+const CHAT_BURST      = 6;     // messages allowed inside the window below
+const CHAT_WINDOW_MS  = 4000;
+
 function createRoom(sizeIdx, numPlayers) {
   const size = Engine.SIZES[sizeIdx] || Engine.SIZES[1];
   const code = makeCode();
@@ -91,7 +103,8 @@ function createRoom(sizeIdx, numPlayers) {
     seats: Array.from({ length: numPlayers }, () => ({ token: null, sock: null, cpu: false, name: "" })),
     hostToken: null,
     touched: Date.now(),
-    cpuTimer: null
+    cpuTimer: null,
+    chat: []
   };
   rooms.set(code, room);
   return room;
@@ -243,6 +256,8 @@ function attach(sock, room, seatIdx, seatToken, name) {
     sizeIdx: room.sizeIdx,
     numPlayers: room.numPlayers
   });
+  // Catch a reconnecting player up on what was said while they were gone.
+  if (room.chat.length) send(sock, { type: "chatlog", messages: room.chat });
   pushRoom(room);
   scheduleCPU(room);
 }
@@ -326,6 +341,35 @@ function handle(sock, msg) {
       seat.name = cleanName(msg.name);
       room.touched = Date.now();
       pushRoom(room);
+      return;
+    }
+
+    case "chat": {
+      const room = rooms.get(sock.room);
+      if (!room) return fail(sock, "no_room", "You are not in a room.");
+      const text = cleanChat(msg.text);
+      if (!text) return;
+
+      // Counts messages, never reads them — this is here so one client cannot
+      // flood the room or the log, not to police what anybody says.
+      const now = Date.now();
+      sock.chatTimes = (sock.chatTimes || []).filter(t => now - t < CHAT_WINDOW_MS);
+      if (sock.chatTimes.length >= CHAT_BURST) {
+        return fail(sock, "chat_rate", "Sending too fast — wait a second.");
+      }
+      sock.chatTimes.push(now);
+
+      const seat = room.seats[sock.seat];
+      const entry = {
+        seat: sock.seat,
+        name: (seat && seat.name) || Engine.PLAYERS[sock.seat].name,
+        text,
+        t: now
+      };
+      room.chat.push(entry);
+      if (room.chat.length > CHAT_LOG) room.chat.shift();
+      room.touched = now;
+      broadcast(room, Object.assign({ type: "chat" }, entry));
       return;
     }
 

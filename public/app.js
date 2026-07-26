@@ -128,6 +128,9 @@
 
   let cursor = 0, cursorShown = false;
 
+  const CHAT_KEEP = 80;                     // messages held in this tab
+  let chatLog = [], chatUnread = 0, chatOpen = false;
+
   /* ── canvas ──────────────────────────────────────────────────────────── */
 
   const stage = $("stage"), box = $("boardBox"), canvas = $("board");
@@ -395,7 +398,17 @@
         if (!animating) playNextMove();
         break;
       }
+      case "chat": {
+        addChat(m);
+        break;
+      }
+      case "chatlog": {
+        chatLog = Array.isArray(m.messages) ? m.messages.slice(-CHAT_KEEP) : [];
+        renderChat();
+        break;
+      }
       case "error": {
+        if (m.code === "chat_rate") { chatNote(m.message); break; }
         lobbyMsg(m.message, "bad");
         if (m.code === "no_room" || m.code === "full") {
           store.del(STORE.room); store.del(STORE.token);
@@ -764,6 +777,7 @@
       $("btnRestart").hidden = !(joined && isHost);
       if (joined) $("roomCode").textContent = roomCode;
     }
+    syncChat();
     syncUI();
   }
 
@@ -825,8 +839,111 @@
       if (location.hash) history.replaceState(null, "", location.pathname);
     }
     roomCode = null; mySeat = -1; isHost = false; seats = []; started = false;
+    // The log belongs to the room you just left, not to the next one.
+    chatLog = []; chatUnread = 0;
+    renderChat();
+    $("toasts").replaceChildren();
+    setChat(false);
     setNet("idle");
   }
+
+  /* ── chat ────────────────────────────────────────────────────────────────
+   *
+   * Messages are relayed and shown exactly as typed — nothing is filtered or
+   * bleeped. They are still written with textContent rather than innerHTML,
+   * which is not about the words: text from one player is rendered in everyone
+   * else's browser, and building that markup by hand would let anyone in a room
+   * run script in the others' tabs.
+   */
+
+  const chatPanel = $("chatPanel"), chatLogEl = $("chatLog"), chatInput = $("chatInput");
+
+  /** One rendered line. `text` is null for local notices. */
+  function chatLine(entry) {
+    const line = document.createElement("div");
+    if (entry.sys) {
+      line.className = "line sys";
+      line.textContent = entry.sys;
+      return line;
+    }
+    line.className = "line";
+    line.style.setProperty("--mc", colorOf(entry.seat));
+    const who = document.createElement("b");
+    who.textContent = entry.name + ": ";
+    const what = document.createElement("span");
+    what.textContent = entry.text;
+    line.append(who, what);
+    return line;
+  }
+
+  function renderChat() {
+    const stuck = chatLogEl.scrollTop + chatLogEl.clientHeight >= chatLogEl.scrollHeight - 24;
+    chatLogEl.replaceChildren(...chatLog.map(chatLine));
+    if (stuck) chatLogEl.scrollTop = chatLogEl.scrollHeight;
+  }
+
+  /** Float a message over the board so the panel doesn't have to stay open. */
+  function toast(entry) {
+    if (chatOpen || entry.sys) return;
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.style.setProperty("--mc", colorOf(entry.seat));
+    const who = document.createElement("b");
+    who.textContent = entry.name + " ";
+    const what = document.createElement("span");
+    what.textContent = entry.text;
+    el.append(who, what);
+    const host = $("toasts");
+    host.append(el);
+    while (host.children.length > 4) host.firstChild.remove();
+    setTimeout(() => el.remove(), 7000);
+  }
+
+  function addChat(entry) {
+    chatLog.push(entry);
+    if (chatLog.length > CHAT_KEEP) chatLog.shift();
+    renderChat();
+    toast(entry);
+    if (!chatOpen && entry.seat !== mySeat) { chatUnread++; syncChat(); }
+  }
+
+  const chatNote = text => { chatLog.push({ sys: text }); renderChat(); };
+
+  function syncChat() {
+    const on = mode === "online" && !!roomCode;
+    $("btnChat").hidden = !on;
+    if (!on && chatOpen) setChat(false);
+    const badge = $("chatBadge");
+    badge.hidden = chatUnread === 0;
+    badge.textContent = chatUnread > 9 ? "9+" : String(chatUnread);
+  }
+
+  function setChat(open) {
+    chatOpen = open;
+    chatPanel.hidden = !open;
+    $("btnChat").setAttribute("aria-expanded", String(open));
+    if (open) {
+      setMenu(false);                        // they share the same corner
+      chatUnread = 0;
+      $("toasts").replaceChildren();
+      renderChat();
+      chatLogEl.scrollTop = chatLogEl.scrollHeight;
+      chatInput.focus();
+    }
+    syncChat();
+  }
+
+  $("btnChat").onclick = () => setChat(chatPanel.hidden);
+  $("btnChatClose").onclick = () => setChat(false);
+
+  $("chatForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const text = chatInput.value.trim();
+    if (!text) return;
+    if (netState !== "open" || !roomCode) { chatNote("Not connected to a room."); return; }
+    sendNet({ type: "chat", text });
+    chatInput.value = "";
+  });
 
   /* ── menu and preferences ────────────────────────────────────────────── */
 
@@ -836,13 +953,17 @@
     sheet.hidden = !open;
     scrim.hidden = !open;
     $("btnMenu").setAttribute("aria-expanded", String(open));
-    if (open) syncUI();          // the seat rows are only kept fresh while open
+    if (open) {
+      setChat(false);            // they share the same corner
+      syncUI();                  // the seat rows are only kept fresh while open
+    }
   }
   $("btnMenu").onclick = () => setMenu(sheet.hidden);
   scrim.onclick = () => setMenu(false);
   addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
     if (!prefs.hidden) { prefs.hidden = true; return; }
+    if (!chatPanel.hidden) { setChat(false); return; }
     setMenu(false);
   });
 
