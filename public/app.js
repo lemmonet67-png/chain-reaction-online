@@ -386,6 +386,7 @@
         mySeat = m.seat;
         isHost = m.host;
         roomCode = m.code;
+        if (Array.isArray(m.ice)) serverIce = m.ice;
         store.set(STORE.room, m.code);
         store.set(STORE.token, m.token);
         // From here on, any reconnect should reclaim this exact seat.
@@ -1012,6 +1013,9 @@
    */
   function iceServers() {
     const list = ICE.slice();
+    // Whatever the server was configured with, so a player who was sent a link
+    // never has to set anything up to be audible.
+    for (const s of serverIce) if (s && s.urls) list.push(s);
     try {
       const t = JSON.parse(store.get("cr.turn") || "null");
       if (t && t.urls) list.push(t);
@@ -1020,6 +1024,7 @@
   }
 
   let voiceOn = false, micOn = false, micStream = null;
+  let serverIce = [];                       // relay list handed over on join
   const peers = new Map();                  // seat -> { pc, sender, audio }
   const deafened = initialDeafened;          // seats we've chosen not to hear
 
@@ -1312,6 +1317,8 @@
     const mt = micStream && micStream.getAudioTracks()[0];
     say("mic track: " + (mt ? mt.readyState + " enabled=" + mt.enabled + " muted=" + mt.muted : "none"));
     say("muted by me: " + (deafened.size ? [...deafened].join(",") : "nobody"));
+    say("TURN relay: " + (serverIce.length ? "yes, from server"
+                        : store.get("cr.turn") ? "yes, set locally" : "none configured"));
 
     if (!peers.size) say("no peers — is the other player in voice?");
     for (const [seat, p] of peers) {

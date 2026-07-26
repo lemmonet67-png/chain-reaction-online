@@ -88,6 +88,25 @@ const CHAT_MAX   = 300;
 const cleanChat  = s =>
   String(s == null ? "" : s).replace(CONTROL, " ").trim().slice(0, CHAT_MAX);
 
+/**
+ * Optional TURN relay, read from the environment so every client in a room gets
+ * it automatically — nobody should have to configure their own browser to be
+ * heard. STUN alone only tells each side its public address; it cannot carry
+ * audio, so a pair behind strict NAT has no direct path and needs a relay.
+ *
+ * On Render: Environment → TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL.
+ * TURN_URLS may list several, comma separated.
+ */
+function turnServers() {
+  const urls = String(process.env.TURN_URLS || "")
+    .split(",").map(s => s.trim()).filter(Boolean);
+  if (!urls.length) return [];
+  const entry = { urls };
+  if (process.env.TURN_USERNAME)   entry.username   = process.env.TURN_USERNAME;
+  if (process.env.TURN_CREDENTIAL) entry.credential = process.env.TURN_CREDENTIAL;
+  return [entry];
+}
+
 const CHAT_LOG        = 60;    // kept so a reconnect can catch up
 const CHAT_BURST      = 6;     // messages allowed inside the window below
 const CHAT_WINDOW_MS  = 4000;
@@ -254,7 +273,8 @@ function attach(sock, room, seatIdx, seatToken, name) {
     token: seatToken,
     host: room.hostToken === seatToken,
     sizeIdx: room.sizeIdx,
-    numPlayers: room.numPlayers
+    numPlayers: room.numPlayers,
+    ice: turnServers()
   });
   // Catch a reconnecting player up on what was said while they were gone.
   if (room.chat.length) send(sock, { type: "chatlog", messages: room.chat });

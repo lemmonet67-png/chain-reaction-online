@@ -102,22 +102,47 @@ server only relays the handshake and never carries or stores a sample.
   Your choices persist across reloads.
 - Needs HTTPS (or localhost) — browsers won't grant a microphone otherwise.
 
-**Some pairs will not connect.** STUN only tells each side its public address;
-it cannot carry audio. When both players are behind strict NAT there is no
-direct path and that pair fails no matter how long it retries — it needs a TURN
-relay, which costs money to run and so isn't bundled. Everyone else in the room
-is unaffected, and chat keeps working. To add one:
+**Some pairs will not connect without a relay.** STUN only tells each side its
+public address; it cannot carry audio. When a player is behind strict NAT —
+common on mobile carriers, university and office networks — there is no direct
+path, and that pair fails no matter how long it retries. Everyone else in the
+room is unaffected and chat keeps working.
+
+This is not something the affected player can fix. It's one setting on the
+server, and then it works for everyone. On Render: **Environment** →
+
+| Variable | Example |
+|---|---|
+| `TURN_URLS` | `turn:relay.example.com:3478` (comma-separate for several) |
+| `TURN_USERNAME` | your relay username |
+| `TURN_CREDENTIAL` | your relay password |
+
+The server hands these to every client as it joins, so nobody configures a
+browser. Where to get one:
+
+- **A managed TURN provider** — several offer free or cheap tiers; check current
+  terms since they change.
+- **Self-host [coturn](https://github.com/coturn/coturn)** on any small VPS.
+  Cheapest if you already have a box.
+
+Relayed audio flows through that server, so it costs bandwidth — only the pairs
+that need it use it; everyone else still connects directly.
+
+For a one-off test without touching the server, a single browser can override:
 
 ```js
 localStorage["cr.turn"] = JSON.stringify(
   { urls: "turn:your.host:3478", username: "u", credential: "p" })
 ```
 
-> **Voice has not been confirmed end to end.** Signalling is verified — offers,
-> answers and candidates all exchange cleanly with zero errors — but two peers
-> on one machine sit behind a single NAT with the same reflexive address, so ICE
-> has no route to complete and no audio ever flows. Confirming it needs two
-> people on different networks.
+**Voice check** (in the Voice section) reports whether a relay is configured,
+along with the negotiated direction and packet counters for each peer.
+
+Voice was confirmed working across two devices. Note that it cannot be tested on
+a single machine: two peers there sit behind one NAT with the same reflexive
+address, so ICE never completes and nothing past the connection — playback,
+direction negotiation, transceiver association — is ever exercised. Every bug
+this feature had lived in exactly that untestable half. Test it with two people.
 
 ### Chat is not filtered
 
